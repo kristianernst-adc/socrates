@@ -12,7 +12,7 @@ portable core to work.
 
 ## What belongs here
 
-Per-harness hooks and glue, once we get to them:
+Per-harness hooks and glue:
 
 ```
 com.socrates/
@@ -23,6 +23,30 @@ com.socrates/
 
 Each client reads only its own namespace folder. Adding one must not change how
 any other client loads the plugin.
+
+## pi/
+
+The Pi side of the plugin. Pi has no MCP, so the portable surfaces reach it as
+skills that shell out to the `socrates` CLI; this adds the two things Pi can do
+natively and the portable format cannot express.
+
+```
+pi/index.ts        registered by the `pi.extensions` field in plugin/package.json
+```
+
+| | |
+| --- | --- |
+| `/socrates` | status, then `capture` · `learn` · `moments` · `open` |
+| `@plugin:socrates <words>` | the same request, routed to the skill |
+
+It adds no logic of its own — every branch shells out to `socrates …` and renders
+the JSON, so the CLI stays the single implementation. A missing `socrates` on
+`PATH` is reported with the symlink that fixes it, not swallowed.
+
+The `@` handle is a rewrite, not a second mechanism: Pi already owns `@` for file
+search, so the extension contributes one autocomplete entry and transforms the
+text into an instruction for the skill. If Pi changes any of this, delete the
+file — nothing portable depends on it.
 
 ## Before adding anything here
 

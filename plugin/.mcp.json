@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "socrates": {
+      "type": "stdio",
+      "command": "./bin/socrates-mcp"
+    }
+  }
+}

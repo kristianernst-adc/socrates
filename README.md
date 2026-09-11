@@ -42,15 +42,18 @@ plugin/                  the Agent Plugins package — this is the plugin root
   bin/socrates-mcp       stdio MCP server — portable tool surface (taste only so far)
   lib/store.mjs          data root resolution, JSONL, the append-only fold
   lib/model.mjs          the capture data model (events, moments)
-  lib/pi.mjs             Pi transcript adapter — the only file that knows Pi exists
-  lib/capture.mjs        transcript discovery + the events.jsonl rebuild
+  lib/capture.mjs        three transcript adapters + the events.jsonl rebuild
   lib/digest.mjs         events → the compact text a model reads
+  lib/page.mjs           a page is a title plus html
+  lib/render.mjs         deterministic html — pages, index, mood board
   lib/taste.mjs          the taste model
+  lib/mood.mjs           web visual references
   skills/                discovered at this fixed location by Agent Plugins hosts
     extract-moments/     digest → learning moments
     update-taste/        reactions → durable preferences
-  test/                  zero-dependency tests
   com.socrates/          reverse-domain namespace for per-harness extras
+    pi/index.ts          Pi extension — /socrates and the @plugin:socrates handle
+test/                    smoke test — synthetic fixtures, run before committing
 .pi/settings.json        registers plugin/ with Pi for local development
 ```
 
@@ -111,10 +114,15 @@ from this session?"* — and the skill description should match.
 Pi discovers skills from `plugin/skills/` by convention, so a new skill needs no manifest
 change: add `plugin/skills/<name>/SKILL.md` and `/reload`.
 
+The same `pi` field in `plugin/package.json` also loads the extension at
+`plugin/com.socrates/pi/index.ts`, which adds `/socrates` (status, `capture`,
+`learn`, `moments`, `open`) and a `@plugin:socrates` handle. Both just call the
+`socrates` CLI, so they need the symlink from step 2 to be in place.
+
 ## Running it
 
 ```bash
-node --test plugin/test/*.test.mjs     # 40 tests, no dependencies
+./test/smoke.sh                        # hermetic, 64 checks, touches nothing of yours
 
 plugin/bin/socrates capture            # rebuild events.jsonl from Pi transcripts
 plugin/bin/socrates extract --list     # which sessions are in the store

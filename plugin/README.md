@@ -26,26 +26,17 @@ plugin/
   lib/
     store.mjs          data root resolution, JSONL, ids
     model.mjs          the event and moment models (the validation boundary)
-    capture.mjs        three transcript adapters + incremental loading
+    capture.mjs        the three transcript adapters + incremental loading
     digest.mjs         a readable, event-id-citing digest of a session
     page.mjs           a page is a title plus html
     render.mjs         the board. no component library
     taste.mjs          preferences
     mood.mjs           web visual references
-    page.mjs           learning pages
-    mood.mjs           web visual references
-    render.mjs         deterministic html (pages, index, mood board)
-    model.mjs          the capture model (events, moments)
-    pi.mjs             Pi transcript adapter — the only file that knows Pi exists
-    capture.mjs        transcript discovery + the events.jsonl rebuild
-    digest.mjs         events -> the compact text a model reads
-  test/
-    capture.test.mjs   store + model + CLI
-    pi.test.mjs        adapter + capture rebuild
-    digest.test.mjs    digest rendering + extract
-                       run: ./test/smoke.sh
   com.socrates/        reverse-domain namespace for per-harness extras
+    pi/index.ts        Pi extension — /socrates and the @plugin:socrates handle
 ```
+
+Tests live at the repo root (`../test/`), not inside the plugin.
 
 `bin/` and `lib/` are not spec-defined locations. The spec allows any additional
 files and directories alongside the component locations, and the containment
@@ -60,17 +51,32 @@ by its subject, and it should be re-synced from source rather than edited here.
 The adaptation notes that make it apply to static documents live in
 `generate-learning/references/design-system.md`.
 
-## Two surfaces, deliberately
+## Three surfaces, deliberately
 
 | Surface | Who uses it | Why |
 | --- | --- | --- |
-| Skill + CLI | any harness, including ones with neither MCP nor hooks (Pi) | boring, robust, works today |
+| Skill + CLI | any harness, including ones with neither MCP nor hooks | boring, robust, works today |
 | MCP server | MCP-capable clients (Claude Code, Codex, Copilot, Cursor, Gemini) | structured tool calls, no shell quoting |
+| Pi extension | Pi only, via `com.socrates/pi/` | native commands and completion; Pi has no MCP |
 
-Both drive the same `lib/` code and the same JSONL store, so they cannot drift.
+All three drive the same `lib/` code and the same JSONL store, so they cannot drift.
 
 The CLI is also the automation surface — the cron-like jobs we want later call
 `socrates …`, not the skill.
+
+### In Pi
+
+`pi install -l ./plugin` reads the `pi` field in `package.json`, which loads
+`com.socrates/pi/index.ts` alongside the skills. It adds:
+
+| | |
+| --- | --- |
+| `/socrates` | status, then `capture` · `learn` · `moments` · `open` |
+| `@plugin:socrates <words>` | the same request, routed to the skill |
+
+The extension duplicates no logic — it shells out to the same `socrates` CLI, so
+it cannot drift from the other surfaces either. If that binary is missing it
+says so and points at the symlink, rather than failing silently.
 
 ## Install
 
@@ -85,6 +91,62 @@ trust them:
 - **Via a compiler:** [sigilco/agentplugins](https://github.com/sigilco/agentplugins)
   emits per-harness artefacts from one manifest. Worth adopting once we need more
   than skills + MCP.
+
+## Manifests, and who reads which
+
+One directory, several client formats. `plugin.json` is the source of truth for
+the portable package; the others are bridges so the same files work elsewhere.
+`test/check-manifests.py` fails the suite if they drift apart.
+
+```
+plugin.json                    Agent Plugins v1 — Cursor, VS Code, Gemini
+mcp.json                       Agent Plugins MCP
+.codex-plugin/plugin.json      Codex (its own manifest + .mcp.json)
+.claude-plugin/plugin.json     Claude Code
+.mcp.json                      Codex and Claude Code both read this
+package.json                   Pi (pi.skills)
+```
+
+`.mcp.json` must describe the **same servers** as `mcp.json`. Shipping both
+filenames with different payloads is a documented way to make a client start the
+wrong one, so the check compares them.
+
+### Every client needs `socrates` on PATH
+
+The skills shell out to the CLI, so the binary has to resolve regardless of which
+harness loads the plugin:
+
+```bash
+ln -sf "$PWD/plugin/bin/socrates" ~/.local/bin/socrates
+```
+
+The MCP server does not need this — clients resolve `./bin/socrates-mcp` against
+the plugin root themselves.
+
+## Installing
+
+| Client | How |
+| --- | --- |
+| **Pi** | `pi install /path/to/plugin` |
+| **Grok Build** | `grok plugin install /path/to/plugin --trust` |
+| **Codex** | the repo doubles as a local marketplace — see below |
+| **Claude Code** | point a marketplace at the repo, or `claude --plugin-dir` |
+| **Cursor** | Customize → Plugins, or a team marketplace |
+
+Most clients install from a *marketplace* rather than a path, so the repo carries
+its own marketplace index:
+
+```
+.agents/plugins/marketplace.json    Codex
+.grok-plugin/                      (not needed — Grok reads .claude-plugin/)
+```
+
+Codex:
+
+```bash
+codex plugin marketplace add /path/to/socrates
+codex plugin add socrates@socrates
+```
 
 ## Configure the data root
 
@@ -105,11 +167,6 @@ Check what is in effect:
 ```bash
 plugin/bin/socrates home
 ```
-
-## Developing
-
-No build step and no dependencies — plain Node ESM, so the skill works in a
-fresh checkout.
 
 ## Output
 
@@ -138,6 +195,9 @@ around between renders. Hover lifts and wiggles it; click opens the page.
 
 ## Developing
 
+No build step and no dependencies — plain Node ESM, so the skill works in a
+fresh checkout.
+
 ```bash
 # capture sessions (deterministic, no model involved)
 plugin/bin/socrates capture --current   # this session
@@ -155,7 +215,7 @@ cat ~/.socrates/taste/TASTE.md
 # author and render a learning page (normally done via the skill)
 plugin/bin/socrates page add --json "$(cat page.json)"
 plugin/bin/socrates render
-open "$(plugin/bin/socrates home | python3 -c 'import json,sys;print(json.load(sys.stdin)["home"])')/site/index.html"
+open "$(plugin/bin/socrates home | python3 -c 'import json,sys;print(json.load(sys.stdin)["home"])')/index.html"
 
 # collect a visual reference and see the mood board
 plugin/bin/socrates mood add --json '{"url":"https://example.com","image":"https://example.com/x.jpg","steal":"Labels outside the code block"}'
@@ -241,8 +301,8 @@ characters. Bulk without the moment that matters.
 
 ## Status
 
-`plugin.json`, `mcp.json`, and the skills are the real shell. Capture works end to
-end; taste has a model and store but no engine behind it yet.
+`plugin.json`, `mcp.json`, the skills, and the renderer are real. `lib/` and
+`bin/` implement enough to prove the model end to end, not the engine.
 
 Done:
 
@@ -252,8 +312,6 @@ Done:
   session under `~/.pi/agent/sessions` (or `--dir`)
 - capture: `socrates extract` renders one session as a compact, citable digest
 - capture: the `extract-moments` skill turns a digest into grounded moments
-`plugin.json`, `mcp.json`, the skills, and the renderer are real. `lib/` and
-`bin/` implement enough to prove the model end to end, not the engine.
 
 Working today: session capture for three harnesses, preferences
 (record → fold → compile), learning pages (author → render → review), the

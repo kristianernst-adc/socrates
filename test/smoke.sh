@@ -90,6 +90,10 @@ check "MCP server is executable"   "test -x $SOCRATES_MCP"
 check "CLI is executable"          "test -x $SOCRATES"
 
 # ---------------------------------------------------------------------------
+head "protocol conformance"
+
+check "manifests are consistent across all five files" "python3 test/check-manifests.py"
+
 head "capture — three harnesses"
 
 for h in pi claude-code codex; do

@@ -4,9 +4,26 @@
   "description": "Turns work you already did with coding agents into learning material, and learns your taste from the feedback you give it.",
   "type": "module",
   "license": "MIT",
-  "keywords": ["pi-package", "pi", "pi-coding-agent", "learning", "agent-plugins", "socrates"],
+  "keywords": [
+    "pi-package",
+    "pi",
+    "pi-coding-agent",
+    "learning",
+    "agent-plugins",
+    "socrates"
+  ],
   "pi": {
-    "skills": ["./skills"]
+    "skills": [
+      "./skills"
+    ]
   },
-  "files": ["plugin.json", "mcp.json", "skills", "bin", "lib", "com.socrates", "README.md"]
+  "files": [
+    "plugin.json",
+    "mcp.json",
+    "skills",
+    "bin",
+    "lib",
+    "com.socrates",
+    "README.md"
+  ]
 }
