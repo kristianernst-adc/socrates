@@ -21,8 +21,11 @@ plugin/
     socrates           CLI — the automation surface
     socrates-mcp       stdio MCP server — the portable tool surface
   lib/
-    store.mjs          data root resolution + JSONL
+    store.mjs          data root resolution + JSONL + the append-only fold
     taste.mjs          the taste model
+    model.mjs          the capture model (events, moments)
+  test/
+    capture.test.mjs   zero-dep tests: node --test plugin/test/*.test.mjs
   com.socrates/        reverse-domain namespace for per-harness extras
 ```
 
@@ -98,12 +101,20 @@ printf '%s\n' \
 
 ## Status
 
-`plugin.json`, `mcp.json`, and the skill are the real shell. `lib/` and `bin/`
-are a working stub — enough to prove the model end to end, not the engine.
+`plugin.json`, `mcp.json`, and the skill are the real shell. Capture and taste
+both have a working data model and store; neither has an engine yet.
+
+Done:
+
+- taste: feedback → statements → `TASTE.md`, plus the `update-taste` skill
+- capture: the event and moment records, their schemas, and `moments add|list|dismiss`
 
 Not done yet:
 
-- ingest/capture commands (the other half of the project)
+- reading the transcripts (`socrates capture`) — the ingest side of the other half
+- packet generation and the `extract-moments` skill
 - per-harness hooks under `com.socrates/`
 - wiring `TASTE.md` into a system prompt, or a skill that reads it
 - the scheduled jobs that will keep taste fresh without being asked
+
+See [../phase-1-capture.md](../phase-1-capture.md) for the capture plan.

@@ -4,8 +4,8 @@
 // The skill is the interactive surface; this is what the skill, cron jobs and
 // scripts actually call. Keep it boring and scriptable.
 //
-// STUB: only the taste (personalization) commands exist so far. Capture/ingest
-// commands belong here too once the engine lands.
+// STUB: taste (personalization) and moments (capture) exist so far. Session
+// ingestion, packet generation and `doctor` belong here too once the engine lands.
 
 import { createInterface } from "node:readline";
 import {
@@ -16,6 +16,7 @@ import {
   resolveHome,
   writeAtomic,
 } from "../lib/store.mjs";
+import { normalizeMoment } from "../lib/model.mjs";
 import { compile, recordFeedback } from "../lib/taste.mjs";
 
 function parseArgs(argv) {
@@ -113,6 +114,64 @@ function tasteRetire(id) {
   return retired;
 }
 
+async function momentsAdd(flags) {
+  const raw = typeof flags.json === "string" ? flags.json : await readStdin();
+  if (!raw) fail("moments add expects a JSON object on stdin or via --json");
+
+  let payload;
+  try {
+    payload = JSON.parse(raw);
+  } catch (error) {
+    fail(`could not parse JSON input: ${error.message}`);
+  }
+
+  // When the CLI is called from a Pi session (the skill shells out), the harness
+  // exports these. Fill in provenance once, here, rather than trusting the caller.
+  if (process.env.PI_SESSION_ID) {
+    payload.origin = {
+      sessionId: process.env.PI_SESSION_ID,
+      harness: "pi",
+      cwd: process.cwd(),
+      ...payload.origin,
+    };
+    payload.capturedBy = { harness: "pi", model: process.env.PI_MODEL, ...payload.capturedBy };
+  }
+  payload.capturedBy = { by: "cli", ...payload.capturedBy };
+
+  const home = resolveHome();
+  ensureDirs(home);
+  let moment;
+  try {
+    moment = normalizeMoment(payload);
+  } catch (error) {
+    fail(error.message);
+  }
+  appendJsonl(paths(home).moments, moment);
+  return moment;
+}
+
+function momentsList(flags) {
+  const home = resolveHome();
+  let moments = readLatestById(paths(home).moments);
+  if (flags.session) moments = moments.filter((m) => m.origin?.sessionId?.startsWith(flags.session));
+  if (flags.kind) moments = moments.filter((m) => m.kind === flags.kind);
+  if (flags.status) moments = moments.filter((m) => m.status === flags.status);
+  return moments
+    .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
+    .slice(0, Number(flags.limit) || 20);
+}
+
+/** Append-only correction: same id, new status, latest record wins. */
+function momentsDismiss(id) {
+  if (!id) fail("moments dismiss needs a moment id");
+  const home = resolveHome();
+  const moment = readLatestById(paths(home).moments).find((m) => m.id === id);
+  if (!moment) fail(`no moment with id ${id}`);
+  const dismissed = { ...moment, status: "rejected", updatedAt: new Date().toISOString() };
+  appendJsonl(paths(home).moments, dismissed);
+  return dismissed;
+}
+
 async function main() {
   const [group, command, ...rest] = process.argv.slice(2);
   const { flags, positional } = parseArgs(rest);
@@ -126,14 +185,18 @@ async function main() {
         "socrates — learn from the work you already did",
         "",
         "  socrates home                        print the resolved data root",
-        "  socrates taste add [--json '<json>']  record preference feedback (or stdin)",
-        "  socrates taste list|compile|retire       see --help on each for flags",
+        "",
+        "  socrates taste add [--json '<json>']     record preference feedback (or stdin)",
+        "  socrates taste list [--status --level --tag]",
+        "  socrates taste compile                   regenerate TASTE.md",
+        "  socrates taste retire <id>               retire a statement",
+        "",
+        "  socrates moments add [--json '<json>']   record a learning moment (or stdin)",
+        "  socrates moments list [--session --kind --status --limit]",
+        "  socrates moments dismiss <id>            append-only rejection",
         "",
         "  --format json                        machine-readable output",
         "  SOCRATES_HOME                        data root (default ~/.socrates)",
-        "  socrates taste list [--status --level --tag]",
-        "  socrates taste compile               regenerate TASTE.md",
-        "  socrates taste retire <id>           retire a statement",
       ].join("\n"),
       false,
     );
@@ -142,6 +205,23 @@ async function main() {
 
   if (group === "home") {
     out({ home: resolveHome(), paths: paths() }, true);
+    return;
+  }
+
+  if (group === "moments") {
+    switch (command) {
+      case "add":
+        out(await momentsAdd(flags), asJson);
+        break;
+      case "list":
+        out(momentsList(flags), asJson);
+        break;
+      case "dismiss":
+        out(momentsDismiss(positional[0] ?? flags.id), asJson);
+        break;
+      default:
+        fail(`unknown moments command: ${command ?? "(none)"}`);
+    }
     return;
   }
 

@@ -1,7 +1,8 @@
 // Socrates storage layout.
 //
-// STUB: this is the personalization slice only. The capture/ingest side of the
-// engine lives elsewhere and should eventually own root resolution for both.
+// STUB: the personalization slice and the capture slice both live here. Capture
+// owns nothing of its own: it extends the same root, the same JSONL helpers and
+// the same append-only fold.
 //
 // Everything is append-only JSONL. Reading is a fold over the file.
 
@@ -49,15 +50,30 @@ export function resolveHome() {
 export function paths(home = resolveHome()) {
   return {
     home,
+    // personalization
     tasteDir: join(home, "taste"),
     feedback: join(home, "taste", "feedback.jsonl"),
     statements: join(home, "taste", "statements.jsonl"),
     compiled: join(home, "taste", "TASTE.md"),
+    // capture
+    eventsDir: join(home, "events"),
+    moments: join(home, "moments.jsonl"),
+    packetsDir: join(home, "packets"),
+    stateDir: join(home, "state"),
+    blobsDir: join(home, "blobs"),
   };
 }
 
+/** Events are sharded by month so no single file grows without bound. */
+export function eventShardPath(home, iso) {
+  return join(paths(home).eventsDir, `${String(iso).slice(0, 7)}.jsonl`);
+}
+
 export function ensureDirs(home) {
-  mkdirSync(paths(home).tasteDir, { recursive: true });
+  const p = paths(home);
+  for (const dir of [p.tasteDir, p.eventsDir, p.packetsDir, p.stateDir, p.blobsDir]) {
+    mkdirSync(dir, { recursive: true });
+  }
 }
 
 export function appendJsonl(file, record) {
@@ -99,4 +115,13 @@ export function makeId(prefix) {
   const time = Date.now().toString(36);
   const rand = Math.random().toString(36).slice(2, 8);
   return `${prefix}_${time}${rand}`;
+}
+
+/**
+ * Deterministic id for a captured event: session + transcript entry + content
+ * block. Derived from content rather than from a byte offset, which is what makes
+ * re-ingesting a session idempotent instead of a dedupe problem.
+ */
+export function eventId(session, entryId, blockIndex) {
+  return ["ev", String(session).slice(0, 8), entryId, blockIndex].join("_");
 }
