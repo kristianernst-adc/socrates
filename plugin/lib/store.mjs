@@ -1,7 +1,8 @@
 // Socrates storage layout.
 //
-// STUB: this is the personalization slice only. The capture/ingest side of the
-// engine lives elsewhere and should eventually own root resolution for both.
+// STUB: the personalization slice and the capture slice both live here. Capture
+// owns nothing of its own: it extends the same root, the same JSONL helpers and
+// the same append-only fold.
 //
 // Everything is append-only JSONL. Reading is a fold over the file.
 
@@ -49,10 +50,14 @@ export function resolveHome() {
 export function paths(home = resolveHome()) {
   return {
     home,
+    // personalization
     tasteDir: join(home, "taste"),
     feedback: join(home, "taste", "feedback.jsonl"),
     statements: join(home, "taste", "statements.jsonl"),
     compiled: join(home, "taste", "TASTE.md"),
+    // capture
+    events: join(home, "events.jsonl"),
+    moments: join(home, "moments.jsonl"),
     cardsDir: join(home, "cards"),
     cards: join(home, "cards", "cards.jsonl"),
     moodDir: join(home, "mood"),
@@ -65,7 +70,7 @@ export function paths(home = resolveHome()) {
 }
 
 export function ensureDirs(home) {
-  mkdirSync(paths(home).tasteDir, { recursive: true });
+  mkdirSync(home, { recursive: true });
 }
 
 export function appendJsonl(file, record) {
@@ -107,4 +112,13 @@ export function makeId(prefix) {
   const time = Date.now().toString(36);
   const rand = Math.random().toString(36).slice(2, 8);
   return `${prefix}_${time}${rand}`;
+}
+
+/**
+ * Deterministic id for a captured event: session + transcript entry + content
+ * block. Derived from content rather than from a byte offset, which is what makes
+ * re-ingesting a session idempotent instead of a dedupe problem.
+ */
+export function eventId(session, entryId, blockIndex) {
+  return ["ev", String(session).slice(0, 8), entryId, blockIndex].join("_");
 }

@@ -1,0 +1,108 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://socrates.local/schemas/event.schema.json",
+  "title": "Socrates captured event",
+  "description": "One normalized thing that happened in a coding session. Harness vocabulary is confined to `source`; nothing above it may know which agent produced the transcript. Produced by capture, consumed by packet generation.",
+  "$defs": {
+    "kind": {
+      "enum": [
+        "session_start",
+        "user_message",
+        "assistant_message",
+        "assistant_thinking",
+        "tool_call",
+        "tool_result",
+        "bash_execution",
+        "model_change",
+        "thinking_level_change",
+        "compaction",
+        "branch_summary",
+        "label",
+        "annotation",
+        "error",
+        "raw"
+      ]
+    },
+    "actor": { "enum": ["user", "assistant", "tool", "system"] },
+    "tool": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": { "type": "string", "maxLength": 60 },
+        "callId": { "type": ["string", "null"], "maxLength": 80 },
+        "args": { "type": "object" }
+      }
+    },
+    "result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ok"],
+      "properties": {
+        "ok": { "type": "boolean" },
+        "exitCode": { "type": ["integer", "null"] },
+        "truncated": { "type": "boolean" }
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "The only place upstream transcript vocabulary is allowed to appear.",
+      "required": ["adapter", "adapterVersion", "blockIndex"],
+      "properties": {
+        "adapter": { "type": "string", "maxLength": 40 },
+        "adapterVersion": { "type": "integer", "minimum": 1 },
+        "file": { "type": "string", "maxLength": 400 },
+        "line": { "type": ["integer", "null"] },
+        "entryId": { "type": "string", "maxLength": 60 },
+        "blockIndex": { "type": "integer", "minimum": 0 },
+        "parentId": { "type": ["string", "null"], "maxLength": 60 }
+      }
+    }
+  },
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["type", "schemaVersion", "id", "session", "ts", "kind", "actor", "source"],
+  "properties": {
+    "type": { "const": "event" },
+    "schemaVersion": { "type": "integer", "minimum": 1 },
+    "id": {
+      "type": "string",
+      "pattern": "^ev_",
+      "description": "Derived from session + entryId + blockIndex, so re-ingesting a transcript is idempotent."
+    },
+    "seq": { "type": "integer", "minimum": 0 },
+    "session": { "type": "string", "minLength": 1, "maxLength": 80 },
+    "ts": { "type": "string", "format": "date-time" },
+    "kind": { "$ref": "#/$defs/kind" },
+    "actor": { "$ref": "#/$defs/actor" },
+    "text": { "type": "string", "maxLength": 4000 },
+    "tool": { "oneOf": [{ "$ref": "#/$defs/tool" }, { "type": "null" }] },
+    "result": { "oneOf": [{ "$ref": "#/$defs/result" }, { "type": "null" }] },
+    "model": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["provider", "id"],
+          "properties": {
+            "provider": { "type": "string", "maxLength": 40 },
+            "id": { "type": "string", "maxLength": 80 }
+          }
+        },
+        { "type": "null" }
+      ]
+    },
+    "source": { "$ref": "#/$defs/source" },
+    "context": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Denormalized onto every event so the store is greppable without joins.",
+      "required": ["cwd"],
+      "properties": {
+        "cwd": { "type": "string", "maxLength": 400 },
+        "repo": { "type": ["string", "null"], "maxLength": 200 }
+      }
+    }
+  }
+}

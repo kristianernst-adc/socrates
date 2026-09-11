@@ -1,0 +1,112 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://socrates.local/schemas/moment.schema.json",
+  "title": "Socrates learning moment",
+  "description": "One thing that happened which is worth understanding, with provenance back to the events that produced it. The atomic unit of the product. Records are append-only; a correction is a new record with the same id, so the latest one wins.",
+  "$defs": {
+    "kind": {
+      "enum": [
+        "concept_encountered",
+        "pattern_used",
+        "tool_without_comprehension",
+        "mistake_made",
+        "user_correction",
+        "repeated_question",
+        "agent_explained",
+        "unresolved_question"
+      ]
+    },
+    "status": { "enum": ["new", "kept", "rejected", "superseded"] },
+    "role": { "enum": ["central", "incidental"] },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "A pointer into the event store. A moment with no evidence is not a moment.",
+      "required": ["events"],
+      "properties": {
+        "events": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "items": { "type": "string", "pattern": "^ev_" }
+        },
+        "quote": { "type": "string", "maxLength": 400 },
+        "kind": { "type": "string", "maxLength": 40 }
+      }
+    }
+  },
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "type", "schemaVersion", "id", "createdAt", "updatedAt", "status",
+    "kind", "title", "summary", "confidence", "evidence", "origin", "capturedBy"
+  ],
+  "properties": {
+    "type": { "const": "moment" },
+    "schemaVersion": { "type": "integer", "minimum": 1 },
+    "id": { "type": "string", "pattern": "^mo_" },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "updatedAt": { "type": "string", "format": "date-time" },
+    "status": { "$ref": "#/$defs/status" },
+    "kind": { "$ref": "#/$defs/kind" },
+    "title": { "type": "string", "minLength": 1, "maxLength": 160 },
+    "summary": { "type": "string", "minLength": 1, "maxLength": 1200 },
+    "why": {
+      "type": "string",
+      "maxLength": 600,
+      "description": "Why we suspect this was not fully understood. The extractor's reasoning, not a restatement."
+    },
+    "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+    "basis": {
+      "type": "array",
+      "maxItems": 8,
+      "description": "Names of the signals that drove this moment.",
+      "items": { "type": "string", "maxLength": 60 }
+    },
+    "evidence": { "type": "array", "minItems": 1, "maxItems": 8, "items": { "$ref": "#/$defs/evidence" } },
+    "topics": { "type": "array", "maxItems": 8, "items": { "type": "string", "maxLength": 60 } },
+    "concepts": {
+      "type": "array",
+      "maxItems": 8,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "role"],
+        "properties": {
+          "name": { "type": "string", "maxLength": 80 },
+          "role": { "$ref": "#/$defs/role" }
+        }
+      }
+    },
+    "origin": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "The session the moment came from.",
+      "required": ["harness", "fidelity"],
+      "properties": {
+        "sessionId": { "type": ["string", "null"], "maxLength": 80 },
+        "cwd": { "type": "string", "maxLength": 400 },
+        "repo": { "type": ["string", "null"], "maxLength": 200 },
+        "harness": { "type": "string", "maxLength": 40 },
+        "fidelity": {
+          "type": "string",
+          "maxLength": 40,
+          "description": "\"full\" when the whole session was available. Anything else means capture lost something, so a thinner moment is not mistaken for a complete one."
+        }
+      }
+    },
+    "capturedBy": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "What produced the moment. Model judgement, attributed.",
+      "required": ["by", "version"],
+      "properties": {
+        "by": { "type": "string", "maxLength": 80 },
+        "version": { "type": "integer", "minimum": 1 },
+        "packetId": { "type": ["string", "null"], "maxLength": 80 },
+        "harness": { "type": "string", "maxLength": 40 },
+        "model": { "type": "string", "maxLength": 120 }
+      }
+    }
+  }
+}

@@ -23,11 +23,20 @@ plugin/
     socrates           CLI — the automation surface
     socrates-mcp       stdio MCP server — the portable tool surface
   lib/
-    store.mjs          data root resolution + JSONL
-    taste.mjs          preferences
+    store.mjs          data root resolution + JSONL + the append-only fold
+    taste.mjs          the taste model
     card.mjs           learning cards
     mood.mjs           web visual references
     render.mjs         deterministic html (cards, index, mood board)
+    model.mjs          the capture model (events, moments)
+    pi.mjs             Pi transcript adapter — the only file that knows Pi exists
+    capture.mjs        transcript discovery + the events.jsonl rebuild
+    digest.mjs         events -> the compact text a model reads
+  test/
+    capture.test.mjs   store + model + CLI
+    pi.test.mjs        adapter + capture rebuild
+    digest.test.mjs    digest rendering + extract
+                       run: node --test plugin/test/*.test.mjs
   com.socrates/        reverse-domain namespace for per-harness extras
 ```
 
@@ -95,6 +104,15 @@ plugin/bin/socrates home
 No build step and no dependencies — plain Node ESM, so the skill works in a
 fresh checkout.
 
+For the full development setup — data root, PATH, registering the plugin with Pi
+— see [../README.md](../README.md). The short version:
+
+```bash
+ln -s "$PWD/plugin/bin/socrates" ~/.local/bin/socrates   # the skill calls bare `socrates`
+pi install -l ./plugin                                  # register with Pi
+node --test plugin/test/*.test.mjs                      # tests
+```
+
 ```bash
 # record a preference
 echo '{"polarity":"avoid","about":"code comments","statement":"Avoid restating what the code already says","source":"user"}' \
@@ -121,6 +139,17 @@ printf '%s\n' \
 
 ## Status
 
+`plugin.json`, `mcp.json`, and the skills are the real shell. Capture works end to
+end; taste has a model and store but no engine behind it yet.
+
+Done:
+
+- taste: feedback → statements → `TASTE.md`, plus the `update-taste` skill
+- capture: the event and moment records, their schemas, and `moments add|list|dismiss`
+- capture: reading Pi transcripts — `socrates capture` rebuilds `events.jsonl` from every
+  session under `~/.pi/agent/sessions` (or `--dir`)
+- capture: `socrates extract` renders one session as a compact, citable digest
+- capture: the `extract-moments` skill turns a digest into grounded moments
 `plugin.json`, `mcp.json`, the skills, and the renderer are real. `lib/` and
 `bin/` implement enough to prove the model end to end, not the engine.
 
@@ -130,7 +159,7 @@ and the mood board with image download.
 
 Not done yet:
 
-- ingest/capture commands (the other half of the project)
+- dogfooding the loop on our own work (stage 4)
 - per-harness hooks under `com.socrates/`
 - wiring `TASTE.md` into a system prompt
 - the scheduled jobs that keep cards and taste fresh without being asked
