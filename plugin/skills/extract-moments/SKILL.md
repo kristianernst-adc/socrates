@@ -17,12 +17,18 @@ The failure mode is producing a book report. If the output reads like a changelo
 
 ## Steps
 
-1. **Pick the session.** If the user named one, match it. If not, list them and choose the
-   one they most likely mean, or the most recent that has real content.
+1. **Pick the session.** If the user named one, match it. If not, take the newest one that
+   has not been extracted yet:
 
    ```bash
-   socrates extract --list
+   socrates extract --pending
    ```
+
+   **If nothing is pending, say so and stop.** Re-extracting a session that already produced
+   moments does not improve them — it appends a second copy, because moment ids are random.
+   `socrates extract --list` shows every session with a `new`/`done` column if you need to
+   see what has been covered. Only re-extract a finished session when the user asks for that
+   session specifically.
 
 2. **Get the digest.**
 
@@ -102,6 +108,8 @@ The failure mode is producing a book report. If the output reads like a changelo
   its own line. If you cannot point at a line, there is no moment.
 - **Never paraphrase into the `quote` field.** It must be findable verbatim in the digest.
   Quotes are how the user checks you.
+- **Never extract a session that is already `done`** unless the user named it. The second
+  pass duplicates the first.
 - **Never invent a topic the session did not cover.** No "you should also learn X".
 - **Never write a moment about the agent's own mistakes.** That is a different product. The
   subject is what the user does not know.

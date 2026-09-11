@@ -40,6 +40,7 @@ plugin/                  the Agent Plugins package — this is the plugin root
   mcp.json               MCP server declaration
   bin/socrates           the CLI — automation surface
   bin/socrates-mcp       stdio MCP server — portable tool surface (taste only so far)
+  bin/socrates-nightly   the unattended pipeline — see "Running extraction unattended"
   lib/store.mjs          data root resolution, JSONL, the append-only fold
   lib/model.mjs          the capture data model (events, moments)
   lib/pi.mjs             Pi transcript adapter — the only file that knows Pi exists
@@ -86,10 +87,12 @@ plugin/bin/socrates home
 
 ### 2. The CLI on your PATH
 
-The skill shells out to a bare `socrates`, so it needs to resolve:
+The skill shells out to a bare `socrates`, so it needs to resolve. Symlink the nightly runner
+too, or you will be calling it by path forever:
 
 ```bash
 ln -s "$PWD/plugin/bin/socrates" ~/.local/bin/socrates
+ln -s "$PWD/plugin/bin/socrates-nightly" ~/.local/bin/socrates-nightly
 ```
 
 ### 3. Register the plugin with Pi
@@ -146,26 +149,110 @@ pi -p --no-session --tools bash \
 | `--no-session` | keeps this run out of your session list |
 | `--tools bash` | gives it the CLI and nothing else |
 
-A nightly job, as a script because cron's `PATH` is minimal and will not find `socrates`:
+The whole pipeline ships as one script, so the only thing you add is the schedule:
 
 ```bash
-#!/bin/sh
-# ~/.socrates/nightly.sh
-set -e
-export PATH="$HOME/.local/bin:/opt/homebrew/bin:$PATH"
-socrates capture
-pi -p --no-session --tools bash "Use the extract-moments skill on the most recent session"
+plugin/bin/socrates-nightly              # capture -> moments -> cards -> render
+plugin/bin/socrates-nightly --no-model   # capture only; no model calls, no cost
+plugin/bin/socrates-nightly --dry-run    # print the plan, change nothing
+plugin/bin/socrates-nightly -h           # options and environment
 ```
 
-```cron
-30 3 * * *  $HOME/.socrates/nightly.sh >> $HOME/.socrates/cron.log 2>&1
+It resolves `socrates` and `pi` itself instead of trusting `PATH`, logs every run to
+`<data root>/nightly.log`, never exports `SOCRATES_HOME`, and runs each model step only when
+there is work for it — `extract --pending` (a session with content and no moments yet) and
+`moments list --uncarded` (a moment with no card). So a nightly job never re-extracts a session
+it already read, which would append a second copy of every moment, and never pays for a no-op
+run.
+
+### Scheduling it
+
+On macOS use `launchd`, not cron. Put this at
+`~/Library/LaunchAgents/com.socrates.nightly.plist`:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.socrates.nightly</string>
+  <key>ProgramArguments</key>
+  <array><string>/Users/you/src/socrates/plugin/bin/socrates-nightly</string></array>
+  <key>StartCalendarInterval</key>
+  <dict><key>Hour</key><integer>3</integer><key>Minute</key><integer>30</integer></dict>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key><string>/opt/homebrew/bin:/usr/bin:/bin</string>
+    <key>SOCRATES_PROJECT_DIR</key><string>/Users/you/src/socrates</string>
+  </dict>
+  <key>StandardOutPath</key><string>/tmp/socrates-nightly.out</string>
+  <key>StandardErrorPath</key><string>/tmp/socrates-nightly.err</string>
+</dict>
+</plist>
 ```
+
+```bash
+launchctl load -w ~/Library/LaunchAgents/com.socrates.nightly.plist
+launchctl kickstart -p gui/$(id -u)/com.socrates.nightly   # fire it now, to prove it works
+launchctl unload -w ~/Library/LaunchAgents/com.socrates.nightly.plist   # off again
+```
+
+The run's own log is `<data root>/nightly.log` either way; the plist paths only catch what
+happens before the script starts. `kickstart` matters because a 3am job is otherwise only
+observable the morning after — do not schedule something you have never seen run.
+
+Both `EnvironmentVariables` entries are load-bearing, and both are easy to miss. launchd
+starts the job with roughly `PATH=/usr/bin:/bin`, where Homebrew's `node` does not exist, so
+without the first the script exits 127 having done nothing. Without the second it runs from
+`$HOME`, where a locally-registered plugin is not visible — see below. Adjust both paths.
+
+cron works too, but on macOS it is deprecated and needs **Full Disk Access** granted to
+`/usr/sbin/cron` in System Settings → Privacy & Security. Without it cron cannot read `~/.pi`
+or `~/.socrates`, and the job appears to run while silently doing nothing:
+
+```cron
+30 3 * * *  $HOME/src/socrates/plugin/bin/socrates-nightly
+```
+
+Two environment gaps apply to either scheduler, and the plist above closes both. A scheduled
+process gets a minimal `PATH`, so if `node` or `pi` live outside `/usr/bin:/bin`, say so:
+
+```cron
+PATH=/opt/homebrew/bin:/usr/bin:/bin
+30 3 * * *  $HOME/src/socrates/plugin/bin/socrates-nightly
+```
+
+And the plugin has to be discoverable. If you registered it locally (`pi install -l ./plugin`)
+rather than globally, the job starts in the wrong directory — point the script at the project,
+which both registers the skills and gives the run the right `cwd`:
+
+```cron
+30 3 * * *  SOCRATES_PROJECT_DIR=$HOME/src/socrates $HOME/src/socrates/plugin/bin/socrates-nightly
+```
+
+A full run costs two model calls, and only on nights with new work — both steps are skipped
+when nothing is pending. For a free nightly run that just keeps the store and the html fresh,
+use `--no-model` in place of the bare script above.
 
 **Why `latest` is right here and wrong in a session.** Inside a session, `--session latest`
 resolves to the half-finished conversation you are in. After it ends — or on a schedule —
 `latest` resolves to a *completed* session, which is exactly what you want to extract. So
 unattended extraction is not only about not blocking you; it is what makes the default
 session selector correct.
+
+**Trust is the other catch, and it fails silently.** Project-local resources — including this
+plugin's skills — load only when the project is trusted, and `-p` never shows a trust prompt.
+With the default `defaultProjectTrust: "ask"`, a non-interactive run *ignores* them. On a
+machine with no saved `~/.pi/agent/trust.json` entry, the run does not error: it simply has no
+`extract-moments` to use, and you get a strange model answer instead. `socrates-nightly`
+passes `--approve` so it does not depend on ambient state. Check what a run can see with:
+
+```bash
+printf '%s\n' '{"type":"get_commands","id":1}' | pi --mode rpc --approve \
+  | grep -o 'skill:[a-z-]*'
+```
+
+Without `--approve` that reports only your user-level skills; with it, the plugin's appear.
 
 **Auth is the catch.** A headless run needs credentials that work non-interactively. An
 OAuth provider whose refresh token has expired fails at 3am with nobody watching; a static

@@ -1,0 +1,303 @@
+#!/bin/sh
+# socrates-nightly — the unattended pipeline, shipped with the plugin so every
+# user runs the same one instead of pasting a script out of the README.
+#
+#   capture            rebuild events.jsonl from the harness transcripts   (free)
+#   extract-moments    turn the newest un-read session into moments         (model)
+#   generate-learning  turn un-carded moments into cards                    (model)
+#   render             rebuild the html                                     (free)
+#
+# Installing the schedule is your job — cron and launchd take different syntax,
+# so this script deliberately does not guess.
+#
+# Usage
+#   socrates-nightly                  full run
+#   socrates-nightly --no-model       capture only; no model calls, no cost
+#   socrates-nightly --dry-run        print the plan, change nothing
+#   socrates-nightly -h               this text
+#
+# Options
+#   --no-model        stop after capture (keeps the store fresh for free)
+#   --dry-run         print what would run, then exit
+#   --provider P      override the provider for this run's model calls
+#   --model M         override the model for this run's model calls
+#
+# Environment
+#   SOCRATES_BIN          CLI to use (default: `socrates` on PATH, else next to this script)
+#   PI_BIN                `pi` to use (default: `pi` on PATH)
+#   SOCRATES_PROJECT_DIR  cd here first (default: leave cwd alone)
+#   SOCRATES_LOG          log file   (default: <data root>/nightly.log)
+#
+# Two things this gets right that a hand-rolled version usually does not:
+#
+#   1. It never exports SOCRATES_HOME. An exported value silently wins over
+#      ~/.socrates for the rest of the run, and an empty scratch root returns
+#      `[]` — which looks exactly like "nothing recorded yet".
+#
+#   2. It asks the store what still needs doing instead of guessing from
+#      timestamps, and runs each model step only when there is work for it:
+#      `extract --pending` (a session with content and no moments yet) and
+#      `moments list --uncarded` (a moment with no card). So a nightly job never
+#      re-extracts a session it already read — which would append a second copy
+#      of every moment, because ids are random — and never pays for a no-op run.
+#
+# Auth is the catch for any unattended run, and this script cannot fix it: an
+# OAuth provider whose refresh token has expired fails at 3am with nobody
+# watching, while a static API key does not. Check the log.
+
+set -eu
+
+# ---------------------------------------------------------------------------
+# options
+# ---------------------------------------------------------------------------
+
+MODEL_STEPS=1
+DRY_RUN=0
+PROVIDER=""
+MODEL=""
+
+usage() {
+  sed -n '2,/^set -eu$/p' "$0" | sed 's/^# \{0,1\}//; $d'
+  exit "${1:-0}"
+}
+
+need_value() {
+  printf 'socrates-nightly: %s needs a value\n' "$1" >&2
+  exit 2
+}
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --no-model) MODEL_STEPS=0 ;;
+    --dry-run) DRY_RUN=1 ;;
+    --provider)
+      [ $# -ge 2 ] || need_value --provider
+      PROVIDER=$2
+      shift
+      ;;
+    --model)
+      [ $# -ge 2 ] || need_value --model
+      MODEL=$2
+      shift
+      ;;
+    -h|--help) usage 0 ;;
+    *)
+      printf 'socrates-nightly: unknown option: %s\n' "$1" >&2
+      printf 'try --help\n' >&2
+      exit 2
+      ;;
+  esac
+  shift
+done
+
+# ---------------------------------------------------------------------------
+# resolve the binaries rather than trusting PATH
+# ---------------------------------------------------------------------------
+
+# Follow symlinks before doing anything with this path. The README puts a symlink
+# in ~/.local/bin, so $0 is that symlink — resolving the project root from it lands
+# in the wrong directory, and the skills silently go missing all over again.
+self=$0
+while [ -L "$self" ]; do
+  target=$(readlink "$self")
+  case "$target" in
+    /*) self=$target ;;
+    *) self=$(dirname -- "$self")/$target ;;
+  esac
+done
+script_dir=$(CDPATH= cd -- "$(dirname -- "$self")" && pwd)
+
+SOCRATES=${SOCRATES_BIN:-}
+if [ -z "$SOCRATES" ]; then
+  if command -v socrates >/dev/null 2>&1; then
+    SOCRATES=$(command -v socrates)
+  else
+    SOCRATES="$script_dir/socrates"
+  fi
+fi
+if [ ! -x "$SOCRATES" ]; then
+  printf 'socrates-nightly: no socrates CLI (tried %s); set SOCRATES_BIN\n' "$SOCRATES" >&2
+  exit 127
+fi
+
+if ! command -v node >/dev/null 2>&1; then
+  printf 'socrates-nightly: node is required but not on PATH\n' >&2
+  exit 127
+fi
+
+# Where we run from decides which skills pi can see. This plugin is registered in
+# the project's .pi/settings.json, and pi finds project resources by walking up
+# from cwd — so from anywhere else the skills are silently absent (3 user-level
+# skills instead of 7) and the run is asked to use a skill that was never loaded.
+# --approve does not help; it is a cwd question, not a trust question. So default
+# to the project this script ships in, and let SOCRATES_PROJECT_DIR override.
+script_root=$(CDPATH= cd -- "$script_dir/../.." && pwd)
+if [ -n "${SOCRATES_PROJECT_DIR:-}" ]; then
+  cd "$SOCRATES_PROJECT_DIR"
+elif [ -f "$script_root/.pi/settings.json" ]; then
+  cd "$script_root"
+fi
+
+# ---------------------------------------------------------------------------
+# the store: ask the CLI, do not re-derive its layout here
+# ---------------------------------------------------------------------------
+
+store_paths=$("$SOCRATES" home | node -e '
+let s = "";
+process.stdin.on("data", (d) => (s += d));
+process.stdin.on("end", () => {
+  process.stdout.write(JSON.parse(s).paths.home + "\n");
+});
+')
+
+ROOT=""
+{
+  IFS= read -r ROOT || true
+} <<EOF
+$store_paths
+EOF
+
+if [ -z "$ROOT" ]; then
+  printf 'socrates-nightly: could not resolve the data root\n' >&2
+  exit 1
+fi
+
+LOG=${SOCRATES_LOG:-$ROOT/nightly.log}
+mkdir -p "$(dirname -- "$LOG")"
+
+log() {
+  line="$(date '+%Y-%m-%dT%H:%M:%S%z') $*"
+  printf '%s\n' "$line" >>"$LOG"
+  if [ -t 2 ]; then printf '%s\n' "$line" >&2; fi
+}
+
+trap 'code=$?; [ "$code" -eq 0 ] || log "run FAILED (exit $code)"' EXIT
+
+run_step() {
+  label=$1
+  shift
+  if [ "$DRY_RUN" -eq 1 ]; then
+    log "would run: $label"
+    return 0
+  fi
+  log "start  $label"
+  if "$@" >>"$LOG" 2>&1; then
+    log "ok     $label"
+  else
+    code=$?
+    log "FAILED $label (exit $code)"
+    exit "$code"
+  fi
+}
+
+# A headless model call. `set --` inside a function rebinds only this function's
+# positional parameters, which keeps the optional flags honest — no string
+# splitting, nothing to break on a value containing spaces.
+run_model() {
+  label=$1
+  prompt=$2
+  if [ "$DRY_RUN" -eq 1 ]; then
+    log "would run: $label"
+    return 0
+  fi
+  log "start  $label"
+  # --approve: project-local resources load only when the project is trusted, and
+  # `-p` never shows a trust prompt — with the default `defaultProjectTrust: ask`
+  # those resources are ignored. On a machine with no saved trust.json that means
+  # zero skills, so the run does not fail, it just silently has no extract-moments
+  # to use. Verifying: `pi --mode rpc` + get_commands reports 0 project skills
+  # without this flag and 4 with it.
+  set -- -p --no-session --approve --tools bash,read
+  if [ -n "$PROVIDER" ]; then set -- "$@" --provider "$PROVIDER"; fi
+  if [ -n "$MODEL" ]; then set -- "$@" --model "$MODEL"; fi
+  set -- "$@" "$prompt"
+  if "$PI" "$@" >>"$LOG" 2>&1; then
+    log "ok     $label"
+  else
+    code=$?
+    log "FAILED $label (exit $code)"
+    exit "$code"
+  fi
+}
+
+# Count a JSON array on stdin; 0 on anything unreadable, so a broken read skips a
+# model call rather than firing one on a guess.
+count_json_array() {
+  node -e '
+let s = "";
+process.stdin.on("data", (d) => (s += d));
+process.stdin.on("end", () => {
+  let n = 0;
+  try {
+    const value = JSON.parse(s);
+    if (Array.isArray(value)) n = value.length;
+  } catch {
+    n = 0;
+  }
+  process.stdout.write(String(n));
+});
+'
+}
+
+# A session with a conversation that has not produced a moment yet.
+pending_sessions() {
+  "$SOCRATES" extract --pending --format json 2>/dev/null | count_json_array
+}
+
+# A moment that no card claims as a source.
+uncarded_moments() {
+  "$SOCRATES" moments list --uncarded --format json 2>/dev/null | count_json_array
+}
+
+# ---------------------------------------------------------------------------
+# the pipeline
+# ---------------------------------------------------------------------------
+
+if [ "$MODEL_STEPS" -eq 1 ]; then MODE=full; else MODE=capture-only; fi
+log "--- run start (mode: $MODE) ---"
+log "store: $ROOT"
+log "cwd:   $(pwd)"
+
+run_step "capture" "$SOCRATES" capture
+
+if [ "$MODEL_STEPS" -eq 0 ]; then
+  log "--- run end (capture only) ---"
+  exit 0
+fi
+
+PI=${PI_BIN:-}
+if [ -z "$PI" ]; then
+  PI=$(command -v pi 2>/dev/null || true)
+fi
+if [ -z "$PI" ] || [ ! -x "$PI" ]; then
+  log "no pi binary — cannot run the model steps; set PI_BIN or use --no-model"
+  exit 127
+fi
+
+# --tools bash,read: the skills shell out to the CLI and read the design docs.
+# Without `read`, generate-learning cannot load the design system.
+
+pending=$(pending_sessions)
+pending=${pending:-0}
+if [ "$pending" -gt 0 ]; then
+  log "$pending session(s) with no moments yet"
+  run_model "extract-moments" \
+    "Use the extract-moments skill. Pick the newest session from \`socrates extract --pending\` and record its moments. This is an unattended run: do not ask questions. If the session yields nothing worth recording, that is a valid outcome — say so and exit."
+else
+  log "every session with content has moments — skipping extract-moments"
+fi
+
+# Counted after extraction, so moments recorded a moment ago are included.
+uncarded=$(uncarded_moments)
+uncarded=${uncarded:-0}
+if [ "$uncarded" -gt 0 ]; then
+  log "$uncarded moment(s) without a card"
+  run_model "generate-learning" \
+    "Use the generate-learning skill on the newest moment from \`socrates moments list --uncarded\`. This is an unattended run: create the card, render it, then exit. Do not ask questions. If nothing is worth a card, say so and exit."
+else
+  log "no un-carded moments — skipping generate-learning"
+fi
+
+run_step "render" "$SOCRATES" render
+
+log "--- run end ---"
