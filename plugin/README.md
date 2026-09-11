@@ -22,6 +22,7 @@ plugin/
   bin/
     socrates           CLI — the automation surface
     socrates-mcp       stdio MCP server — the portable tool surface
+    socrates-nightly   the unattended pipeline: capture → moments → cards → render
   lib/
     store.mjs          data root resolution + JSONL + the append-only fold
     taste.mjs          the taste model

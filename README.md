@@ -40,6 +40,7 @@ plugin/                  the Agent Plugins package — this is the plugin root
   mcp.json               MCP server declaration
   bin/socrates           the CLI — automation surface
   bin/socrates-mcp       stdio MCP server — portable tool surface (taste only so far)
+  bin/socrates-nightly   the unattended pipeline — see "Running extraction unattended"
   lib/store.mjs          data root resolution, JSONL, the append-only fold
   lib/model.mjs          the capture data model (events, moments)
   lib/pi.mjs             Pi transcript adapter — the only file that knows Pi exists
@@ -146,19 +147,37 @@ pi -p --no-session --tools bash \
 | `--no-session` | keeps this run out of your session list |
 | `--tools bash` | gives it the CLI and nothing else |
 
-A nightly job, as a script because cron's `PATH` is minimal and will not find `socrates`:
+The whole pipeline ships as one script, so the only thing you add is the schedule:
 
 ```bash
-#!/bin/sh
-# ~/.socrates/nightly.sh
-set -e
-export PATH="$HOME/.local/bin:/opt/homebrew/bin:$PATH"
-socrates capture
-pi -p --no-session --tools bash "Use the extract-moments skill on the most recent session"
+plugin/bin/socrates-nightly              # capture -> moments -> cards -> render
+plugin/bin/socrates-nightly --no-model   # capture only; no model calls, no cost
+plugin/bin/socrates-nightly --dry-run    # print the plan, change nothing
+plugin/bin/socrates-nightly -h           # options and environment
 ```
 
+It resolves `socrates` and `pi` itself instead of trusting `PATH`, logs every run to
+`<data root>/nightly.log`, never exports `SOCRATES_HOME`, and skips the model calls when the
+store is unchanged since the last run — so a nightly job does not re-extract the same session
+and pay for it.
+
 ```cron
-30 3 * * *  $HOME/.socrates/nightly.sh >> $HOME/.socrates/cron.log 2>&1
+30 3 * * *  $HOME/src/socrates/plugin/bin/socrates-nightly
+```
+
+Two things cron will not give you. Its `PATH` is minimal, so if `node` or `pi` live outside
+`/usr/bin:/bin` say so:
+
+```cron
+PATH=/opt/homebrew/bin:/usr/bin:/bin
+30 3 * * *  $HOME/src/socrates/plugin/bin/socrates-nightly
+```
+
+And the plugin has to be discoverable. If you registered it locally (`pi install -l ./plugin`)
+rather than globally, cron starts in the wrong directory — point the script at the project:
+
+```cron
+30 3 * * *  SOCRATES_PROJECT_DIR=$HOME/src/socrates $HOME/src/socrates/plugin/bin/socrates-nightly
 ```
 
 **Why `latest` is right here and wrong in a session.** Inside a session, `--session latest`
