@@ -87,10 +87,12 @@ plugin/bin/socrates home
 
 ### 2. The CLI on your PATH
 
-The skill shells out to a bare `socrates`, so it needs to resolve:
+The skill shells out to a bare `socrates`, so it needs to resolve. Symlink the nightly runner
+too, or you will be calling it by path forever:
 
 ```bash
 ln -s "$PWD/plugin/bin/socrates" ~/.local/bin/socrates
+ln -s "$PWD/plugin/bin/socrates-nightly" ~/.local/bin/socrates-nightly
 ```
 
 ### 3. Register the plugin with Pi

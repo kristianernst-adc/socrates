@@ -94,7 +94,18 @@ done
 # resolve the binaries rather than trusting PATH
 # ---------------------------------------------------------------------------
 
-script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+# Follow symlinks before doing anything with this path. The README puts a symlink
+# in ~/.local/bin, so $0 is that symlink — resolving the project root from it lands
+# in the wrong directory, and the skills silently go missing all over again.
+self=$0
+while [ -L "$self" ]; do
+  target=$(readlink "$self")
+  case "$target" in
+    /*) self=$target ;;
+    *) self=$(dirname -- "$self")/$target ;;
+  esac
+done
+script_dir=$(CDPATH= cd -- "$(dirname -- "$self")" && pwd)
 
 SOCRATES=${SOCRATES_BIN:-}
 if [ -z "$SOCRATES" ]; then
@@ -114,8 +125,17 @@ if ! command -v node >/dev/null 2>&1; then
   exit 127
 fi
 
+# Where we run from decides which skills pi can see. This plugin is registered in
+# the project's .pi/settings.json, and pi finds project resources by walking up
+# from cwd — so from anywhere else the skills are silently absent (3 user-level
+# skills instead of 7) and the run is asked to use a skill that was never loaded.
+# --approve does not help; it is a cwd question, not a trust question. So default
+# to the project this script ships in, and let SOCRATES_PROJECT_DIR override.
+script_root=$(CDPATH= cd -- "$script_dir/../.." && pwd)
 if [ -n "${SOCRATES_PROJECT_DIR:-}" ]; then
   cd "$SOCRATES_PROJECT_DIR"
+elif [ -f "$script_root/.pi/settings.json" ]; then
+  cd "$script_root"
 fi
 
 # ---------------------------------------------------------------------------
@@ -236,6 +256,7 @@ uncarded_moments() {
 if [ "$MODEL_STEPS" -eq 1 ]; then MODE=full; else MODE=capture-only; fi
 log "--- run start (mode: $MODE) ---"
 log "store: $ROOT"
+log "cwd:   $(pwd)"
 
 run_step "capture" "$SOCRATES" capture
 
