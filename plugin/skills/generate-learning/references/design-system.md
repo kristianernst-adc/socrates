@@ -80,6 +80,49 @@ A layout changes rhythm and emphasis. It never changes the block vocabulary.
 `explanation`, `snippet`, `contrast`, `diagram`, `drill`, `callout`,
 `reference`. Full field reference in `card-model.md`.
 
+## Interactivity
+
+A page may include inline JavaScript. Not a framework, not a build step — a page
+is one file that opens from `file://` on a machine that is offline.
+
+Use it only where **manipulating something teaches what reading cannot**:
+
+| Interaction | Use when | Example |
+| --- | --- | --- |
+| Scrub a variable | a value has a non-obvious effect across a range | drag an offset past a cap and watch the result empty out |
+| Toggle a path | two implementations differ in a way that is easier to see than to describe | ranked search vs. an exhaustive listing |
+| Step through | order matters and the intermediate states carry the meaning | a request moving through a pipeline |
+| Simulate an input | the answer depends on the input's shape | a query through tokenisation and fusion |
+
+Do **not** add interactivity for any of these reasons:
+
+- animating something that could simply be written down
+- hiding content behind a control that would fit on the page
+- making the reader perform steps you have not given them a reason to want
+- anything whose removal would not change understanding
+
+The test: if the interaction were replaced by one sentence, would the reader lose
+something? If not, write the sentence.
+
+### Constraints for a local file
+
+Interactivity has to survive being opened with no server, no network, and no
+tooling:
+
+- **Inline classic scripts only.** A `file://` page cannot `import` a module or
+  `fetch` a sibling file — the browser blocks both. One `<script>` with no
+  `type="module"` and no external `src`.
+- **No external resources** of any kind. No CDN, no fonts, no images from the
+  network.
+- **Readable without JavaScript.** The prose has to carry the idea on its own;
+  the interaction is an addition. Do not render essential content from a script.
+- **Never render the page's meaning from a script that could fail.** Set the
+  default state in the HTML, then let the script adjust it.
+- **Respect `prefers-reduced-motion`.** Transitions off, state changes still
+  visible.
+- **Keyboard usable.** Native controls (`input[type=range]`, `button`,
+  `details`) rather than clickable divs.
+
 ## Collecting visual references
 
 The design should evolve with evidence rather than taste-in-the-abstract. Mood
@@ -140,8 +183,15 @@ Score it only after opening the rendered HTML.
 | Reads in under five minutes | 5 |
 | **Total** | **100** |
 
-Below 70, rework it or do not ship it. Any card with no provenance fails
-outright, regardless of score.
+Below 70, rework it or do not ship it. Two automatic failures, regardless of
+score:
+
+- **No provenance.** A card that cannot point at the work it came from is a blog
+  post.
+- **Fails the bar.** If the candidate does not pass all five tests in the
+  `generate-learning` skill, it is not a card and no amount of craft rescues it.
+  Title hook, lookup-shaped lesson, or a claim that only holds in one repository
+  all fail here.
 
 ## Still to decide
 

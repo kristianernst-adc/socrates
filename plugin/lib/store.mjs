@@ -1,10 +1,10 @@
 // Socrates storage layout.
 //
-// STUB: the personalization slice and the capture slice both live here. Capture
-// owns nothing of its own: it extends the same root, the same JSONL helpers and
-// the same append-only fold.
-//
 // Everything is append-only JSONL. Reading is a fold over the file.
+//
+// Two things intentionally live outside the flat files: captured events, which
+// are one file per *source session file* so that incremental loading can append
+// to the right one, and mood assets, which are binary.
 
 import {
   appendFileSync,
@@ -50,22 +50,31 @@ export function resolveHome() {
 export function paths(home = resolveHome()) {
   return {
     home,
+
     // personalization
     tasteDir: join(home, "taste"),
     feedback: join(home, "taste", "feedback.jsonl"),
     statements: join(home, "taste", "statements.jsonl"),
     compiled: join(home, "taste", "TASTE.md"),
+
     // capture
-    events: join(home, "events.jsonl"),
+    eventsDir: join(home, "events"),
     moments: join(home, "moments.jsonl"),
-    cardsDir: join(home, "cards"),
-    cards: join(home, "cards", "cards.jsonl"),
+    state: join(home, "state"),
+    cursor: join(home, "state", "captured.json"),
+
+    // pages
+    pages: join(home, "pages.jsonl"),
+
+    // mood
     moodDir: join(home, "mood"),
     moods: join(home, "mood", "items.jsonl"),
     moodAssets: join(home, "mood", "assets"),
-    siteDir: join(home, "site"),
-    siteIndex: join(home, "site", "index.html"),
-    siteMoodBoard: join(home, "site", "mood.html"),
+
+    // output, at the top level so opening the folder is enough
+    board: join(home, "index.html"),
+    pagesDir: join(home, "pages"),
+    moodBoard: join(home, "mood.html"),
   };
 }
 
@@ -114,11 +123,21 @@ export function makeId(prefix) {
   return `${prefix}_${time}${rand}`;
 }
 
+/** FNV-1a, used where a stable short digest of a string is enough. */
+export function hash(input) {
+  let h = 0x811c9dc5;
+  const text = String(input);
+  for (let i = 0; i < text.length; i += 1) {
+    h ^= text.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h.toString(36).padStart(7, "0");
+}
+
 /**
- * Deterministic id for a captured event: session + transcript entry + content
- * block. Derived from content rather than from a byte offset, which is what makes
- * re-ingesting a session idempotent instead of a dedupe problem.
+ * A deterministic event id. Determinism is what makes re-reading a source file
+ * idempotent: the same transcript line always produces the same event id.
  */
-export function eventId(session, entryId, blockIndex) {
-  return ["ev", String(session).slice(0, 8), entryId, blockIndex].join("_");
+export function eventId(session, entryId, blockIndex = 0) {
+  return `evt_${hash(`${session}:${entryId}:${blockIndex}`)}`;
 }

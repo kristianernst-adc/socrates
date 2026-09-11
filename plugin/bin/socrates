@@ -3,12 +3,13 @@
 //
 // The skill is the interactive surface; this is what the skill, cron jobs and
 // scripts actually call. Keep it boring and scriptable.
-//
-// STUB: taste (personalization) and moments (capture) exist so far. Session
-// ingestion, packet generation and `doctor` belong here too once the engine lands.
 
+import { readFileSync } from "node:fs";
 import { createInterface } from "node:readline";
-import { listCards, recordCard, reviewCard } from "../lib/card.mjs";
+
+import { allEvents, capture, listSessions as capturedSessions, readSession } from "../lib/capture.mjs";
+import { listSessions as summarise, renderDigest } from "../lib/digest.mjs";
+import { normalizeMoment } from "../lib/model.mjs";
 import {
   downloadMoodAsset,
   listMoods,
@@ -16,6 +17,7 @@ import {
   recordMood,
   setMoodStatus,
 } from "../lib/mood.mjs";
+import { dismissPage, listPages, recordPage } from "../lib/page.mjs";
 import { renderAll, renderMoodBoardTo, renderOne } from "../lib/render.mjs";
 import {
   appendJsonl,
@@ -26,10 +28,7 @@ import {
   resolveHome,
   writeAtomic,
 } from "../lib/store.mjs";
-import { normalizeMoment } from "../lib/model.mjs";
 import { compile, recordFeedback } from "../lib/taste.mjs";
-import { capture, piSessionsDir } from "../lib/capture.mjs";
-import { listSessions, pickSession, renderDigest } from "../lib/digest.mjs";
 
 function parseArgs(argv) {
   const flags = {};
@@ -38,17 +37,12 @@ function parseArgs(argv) {
     const token = argv[i];
     if (token.startsWith("--")) {
       const [name, inline] = token.slice(2).split("=");
-      if (inline !== undefined) {
-        flags[name] = inline;
-      } else if (argv[i + 1] && !argv[i + 1].startsWith("--")) {
+      if (inline !== undefined) flags[name] = inline;
+      else if (argv[i + 1] && !argv[i + 1].startsWith("--")) {
         flags[name] = argv[i + 1];
         i += 1;
-      } else {
-        flags[name] = true;
-      }
-    } else {
-      positional.push(token);
-    }
+      } else flags[name] = true;
+    } else positional.push(token);
   }
   return { flags, positional };
 }
@@ -60,13 +54,8 @@ async function readStdin() {
 }
 
 function out(value, asJson) {
-  if (asJson) {
-    process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
-    return;
-  }
-  process.stdout.write(
-    typeof value === "string" ? `${value}\n` : `${JSON.stringify(value, null, 2)}\n`,
-  );
+  if (asJson) process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
+  else process.stdout.write(typeof value === "string" ? `${value}\n` : `${JSON.stringify(value, null, 2)}\n`);
 }
 
 function fail(message) {
@@ -74,24 +63,22 @@ function fail(message) {
   process.exit(1);
 }
 
-/**
- * An empty list is indistinguishable from reading the wrong store, so name the
- * store. Goes to stderr so `--format json` output stays pipeable.
- *
- * This exists because an exported SOCRATES_HOME silently wins over ~/.socrates,
- * and `[]` from a scratch directory looks exactly like "nothing recorded yet".
- */
-function noteEmpty(what, file) {
-  process.stderr.write(`socrates: 0 ${what} in ${file}\n`);
-  const override = process.env.SOCRATES_HOME?.trim();
-  if (override) {
-    process.stderr.write(`socrates: SOCRATES_HOME=${override} overrides the default root\n`);
-  }
+function noteEmpty(what, where) {
+  process.stderr.write(`socrates: no ${what} yet — expected at ${where}\n`);
 }
 
 async function readPayload(flags, what) {
+  // --json-file avoids shell quoting entirely, which matters when the payload
+  // contains html.
+  if (typeof flags["json-file"] === "string") {
+    try {
+      return JSON.parse(readFileSync(flags["json-file"], "utf8"));
+    } catch (error) {
+      fail(`could not read ${flags["json-file"]}: ${error.message}`);
+    }
+  }
   const raw = typeof flags.json === "string" ? flags.json : await readStdin();
-  if (!raw) fail(`${what} expects a JSON object on stdin or via --json`);
+  if (!raw) fail(`${what} expects a JSON object on stdin, via --json, or via --json-file`);
   try {
     return JSON.parse(raw);
   } catch (error) {
@@ -99,121 +86,80 @@ async function readPayload(flags, what) {
   }
 }
 
-async function tasteAdd(flags) {
-  const payload = await readPayload(flags, "taste add");
-  if (process.env.PI_PROVIDER) payload.harness = payload.harness ?? "pi";
+// ---------------------------------------------------------------------------
+// capture
+// ---------------------------------------------------------------------------
 
-  const home = resolveHome();
-  ensureDirs(home);
-  try {
-    return recordFeedback(payload, home);
-  } catch (error) {
-    fail(error.message);
-  }
-}
-
-async function cardAdd(flags) {
-  const payload = await readPayload(flags, "card add");
+function captureRun(flags) {
   const home = resolveHome();
   ensureDirs(home);
 
-  // Fill in what the agent should never have to guess.
-  const provenance = payload.provenance ?? {};
-  provenance.cwd = provenance.cwd ?? process.cwd();
-  if (process.env.PI_PROVIDER) provenance.harness = provenance.harness ?? "pi";
-  if (process.env.PI_MODEL) provenance.model = provenance.model ?? process.env.PI_MODEL;
-  if (process.env.PI_SESSION_ID) provenance.sessionId = provenance.sessionId ?? process.env.PI_SESSION_ID;
-  payload.provenance = provenance;
-
-  let card;
-  try {
-    card = recordCard(payload, home);
-  } catch (error) {
-    fail(error.message);
+  // Explicit selection only. A bare `capture` syncs everything already on disk,
+  // which is cheap after the first run because unchanged files are skipped.
+  const files = [];
+  if (typeof flags.file === "string") files.push(flags.file);
+  if (flags.current) {
+    const current = process.env.PI_SESSION_FILE;
+    if (!current) fail("no current session here (PI_SESSION_FILE is unset)");
+    files.push(current);
   }
 
-  const file = flags["no-render"] ? undefined : renderOne(card.id, home);
-  return { card, file };
+  return capture({
+    home,
+    only: files.length ? files : undefined,
+    adapter: typeof flags.adapter === "string" ? flags.adapter : flags.harness,
+    force: Boolean(flags.force),
+    dryRun: Boolean(flags["dry-run"]),
+  });
 }
 
-function cardList(flags) {
-  let cards = listCards(resolveHome());
-  if (flags.status) cards = cards.filter((c) => c.review.status === flags.status);
-  if (flags.topic) cards = cards.filter((c) => c.topic === flags.topic);
-  if (flags.tag) cards = cards.filter((c) => c.tags.includes(flags.tag));
-  return cards.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+function captureReport(result) {
+  const lines = [
+    `captured ${result.events} events (${result.skipped} unchanged, ${result.failed.length} failed)`,
+  ];
+  for (const c of result.captured.slice(0, 25)) {
+    lines.push(
+      `  ${c.mode === "delta" ? "append" : "full  "} ${String(c.events).padStart(5)}  ${c.adapter}/${String(
+        c.session ?? "?",
+      ).slice(0, 12)}`,
+    );
+  }
+  if (result.captured.length > 25) lines.push(`  … and ${result.captured.length - 25} more`);
+  for (const f of result.failed) lines.push(`  FAILED ${f.file}: ${f.error}`);
+  return lines.join("\n");
 }
 
-async function moodAdd(flags) {
-  const payload = await readPayload(flags, "mood add");
+// ---------------------------------------------------------------------------
+// extract
+// ---------------------------------------------------------------------------
+
+function extract(flags) {
   const home = resolveHome();
-  ensureDirs(home);
+  const events = allEvents(home);
+  if (!events.length) fail("no events yet — run `socrates capture` first");
 
-  let mood;
-  try {
-    mood = normalizeMood(payload);
-  } catch (error) {
-    fail(error.message);
+  if (flags.list === true) return summarise(events).map(({ events: _e, ...rest }) => rest);
+
+  if (typeof flags.session === "string") {
+    const path = readSession(home, flags.session);
+    if (!path) fail(`no captured session matching ${flags.session}`);
+    return { digest: renderDigest(path) };
   }
 
-  // Downloading is best effort: a dead link must not lose the reference.
-  let download = { downloaded: false, reason: "skipped" };
-  if (!flags["no-download"]) {
-    download = await downloadMoodAsset(mood, home);
-    mood = download.mood;
-  }
-
-  recordMood(mood, home);
-  return { mood, downloaded: download.downloaded, reason: download.reason };
+  const sessions = capturedSessions(home);
+  if (!sessions.length) fail("nothing captured");
+  const chosen = flags.latest ? sessions[0] : sessions[0];
+  return { digest: renderDigest(chosen.path), session: chosen.session };
 }
 
-function moodBoard(flags) {
-  const home = resolveHome();
-  ensureDirs(home);
-  return { wrote: renderMoodBoardTo(home), items: listMoods(home).length };
-}
-
-function tasteList(flags) {
-  const home = resolveHome();
-  let statements = readLatestById(paths(home).statements);
-  if (flags.status) statements = statements.filter((s) => s.status === flags.status);
-  if (flags.level) statements = statements.filter((s) => s.scope.level === flags.level);
-  if (flags.tag) statements = statements.filter((s) => s.tags?.includes(flags.tag));
-  return statements.sort((a, b) => b.confidence - a.confidence);
-}
-
-function tasteCompile() {
-  const home = resolveHome();
-  ensureDirs(home);
-  const statements = readLatestById(paths(home).statements);
-  const markdown = compile(statements);
-  writeAtomic(paths(home).compiled, markdown);
-  return { wrote: paths(home).compiled, statements: statements.length };
-}
-
-function tasteRetire(id) {
-  if (!id) fail("taste retire needs a statement id");
-  const home = resolveHome();
-  const statements = readLatestById(paths(home).statements);
-  const statement = statements.find((s) => s.id === id);
-  if (!statement) fail(`no statement with id ${id}`);
-  const retired = { ...statement, status: "retired", updatedAt: new Date().toISOString() };
-  appendJsonl(paths(home).statements, retired);
-  return retired;
-}
+// ---------------------------------------------------------------------------
+// moments
+// ---------------------------------------------------------------------------
 
 async function momentsAdd(flags) {
-  const raw = typeof flags.json === "string" ? flags.json : await readStdin();
-  if (!raw) fail("moments add expects a JSON object on stdin or via --json");
+  const payload = await readPayload(flags, "moments add");
 
-  let payload;
-  try {
-    payload = JSON.parse(raw);
-  } catch (error) {
-    fail(`could not parse JSON input: ${error.message}`);
-  }
-
-  // When the CLI is called from a Pi session (the skill shells out), the harness
+  // When the CLI is called from a Pi session (a skill shells out), the harness
   // exports these. Fill in provenance once, here, rather than trusting the caller.
   if (process.env.PI_SESSION_ID) {
     payload.origin = {
@@ -249,8 +195,8 @@ function momentsList(flags) {
     .slice(0, Number(flags.limit) || 20);
 }
 
-/** Append-only correction: same id, new status, latest record wins. */
-function momentsDismiss(id) {  if (!id) fail("moments dismiss needs a moment id");
+function momentsDismiss(id) {
+  if (!id) fail("moments dismiss needs a moment id");
   const home = resolveHome();
   const moment = readLatestById(paths(home).moments).find((m) => m.id === id);
   if (!moment) fail(`no moment with id ${id}`);
@@ -259,266 +205,285 @@ function momentsDismiss(id) {  if (!id) fail("moments dismiss needs a moment id"
   return dismissed;
 }
 
-function captureEvents(flags, asJson) {
+// ---------------------------------------------------------------------------
+// pages
+// ---------------------------------------------------------------------------
+
+async function pageAdd(flags) {
+  const payload = await readPayload(flags, "page add");
   const home = resolveHome();
   ensureDirs(home);
-  const dir = typeof flags.dir === "string" ? flags.dir : piSessionsDir();
 
-  const result = capture({
-    dir,
-    eventsFile: paths(home).events,
-    dryRun: flags["dry-run"] === true,
-  });
+  // Fill in what the author should never have to guess.
+  const provenance = payload.provenance ?? {};
+  provenance.cwd = provenance.cwd ?? process.cwd();
+  if (process.env.PI_SESSION_ID) provenance.session = provenance.session ?? process.env.PI_SESSION_ID;
+  if (process.env.PI_MODEL) provenance.model = provenance.model ?? process.env.PI_MODEL;
+  payload.provenance = provenance;
 
-  if (asJson) {
-    out(result, true);
-    return result;
+  let page;
+  try {
+    page = recordPage(payload, home);
+  } catch (error) {
+    fail(error.message);
   }
-
-  const verb = flags["dry-run"] === true ? "would capture" : "captured";
-  const lines = [
-    `${verb} ${result.events} events from ${result.sessions} sessions`,
-    `  from ${result.dir}`,
-    `  to   ${result.eventsFile}`,
-  ];
-  for (const file of result.files) {
-    const name = file.file.slice(result.dir.length + 1);
-    lines.push(`    ${String(file.events).padStart(5)}  ${name}`);
-  }
-  if (!result.sessions) lines.push("    (no sessions found — is this the right --dir?)");
-  out(lines.join("\n"), false);
-  return result;
+  const file = flags["no-render"] ? undefined : renderOne(page.id, home);
+  return { page, file };
 }
 
-function extract(flags) {
+function pageList(flags) {
+  let pages = listPages(resolveHome(), { includeDismissed: Boolean(flags.all) });
+  if (flags.topic) pages = pages.filter((p) => p.topic === flags.topic);
+  if (flags.tag) pages = pages.filter((p) => p.tags.includes(flags.tag));
+  return pages.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+}
+
+// ---------------------------------------------------------------------------
+// mood
+// ---------------------------------------------------------------------------
+
+async function moodAdd(flags) {
+  const payload = await readPayload(flags, "mood add");
   const home = resolveHome();
-  const events = readJsonl(paths(home).events);
-  if (!events.length) fail("no events yet — run `socrates capture` first");
+  ensureDirs(home);
 
-  if (flags.list === true) {
-    return listSessions(events).map(({ events: _events, ...rest }) => rest);
+  let mood;
+  try {
+    mood = normalizeMood(payload);
+  } catch (error) {
+    fail(error.message);
   }
 
-  const selector = typeof flags.session === "string" ? flags.session : "latest";
-  const picked = pickSession(events, selector);
-  if (!picked) fail(`no session matching \`${selector}\` — try --list`);
-
-  // A session with no conversation at all is not worth a model call. Say so
-  // rather than emitting a digest with nothing in it.
-  if (!picked.hasConversation) {
-    return {
-      session: picked.session,
-      skipped: "no conversation — no assistant messages or tool calls",
-      digest: null,
-    };
+  // Downloading is best effort: a dead link must not lose the reference.
+  let download = { downloaded: false, reason: "skipped" };
+  if (!flags["no-download"]) {
+    download = await downloadMoodAsset(mood, home);
+    mood = download.mood;
   }
-
-  return { ...picked, digest: renderDigest(picked.events) };
+  recordMood(mood, home);
+  return { mood, downloaded: download.downloaded, reason: download.reason };
 }
+
+// ---------------------------------------------------------------------------
+// taste
+// ---------------------------------------------------------------------------
+
+async function tasteAdd(flags) {
+  const payload = await readPayload(flags, "taste add");
+  if (process.env.PI_PROVIDER) payload.harness = payload.harness ?? "pi";
+  const home = resolveHome();
+  ensureDirs(home);
+  try {
+    return recordFeedback(payload, home);
+  } catch (error) {
+    fail(error.message);
+  }
+}
+
+function tasteList(flags) {
+  const home = resolveHome();
+  let statements = readLatestById(paths(home).statements);
+  if (flags.status) statements = statements.filter((s) => s.status === flags.status);
+  if (flags.level) statements = statements.filter((s) => s.scope.level === flags.level);
+  if (flags.tag) statements = statements.filter((s) => s.tags?.includes(flags.tag));
+  return statements.sort((a, b) => b.confidence - a.confidence);
+}
+
+function tasteCompile() {
+  const home = resolveHome();
+  ensureDirs(home);
+  const statements = readLatestById(paths(home).statements);
+  writeAtomic(paths(home).compiled, compile(statements));
+  return { wrote: paths(home).compiled, statements: statements.length };
+}
+
+function tasteRetire(id) {
+  if (!id) fail("taste retire needs a statement id");
+  const home = resolveHome();
+  const statement = readLatestById(paths(home).statements).find((s) => s.id === id);
+  if (!statement) fail(`no statement with id ${id}`);
+  const retired = { ...statement, status: "retired", updatedAt: new Date().toISOString() };
+  appendJsonl(paths(home).statements, retired);
+  return retired;
+}
+
+// ---------------------------------------------------------------------------
+
+const HELP = [
+  "socrates — learn from the work you already did",
+  "",
+  "  capture [--current] [--file <path>] [--adapter <a>] [--force] [--dry-run]",
+  "          sync transcripts into events (unchanged files are skipped)",
+  "  extract [--list | --session <id>]",
+  "          a readable digest of a captured session",
+  "",
+  "  moments add [--json-file <p>] | list [--kind --status --limit] | dismiss <id>",
+  "  page    add [--json-file <p>] [--no-render] | list [--topic --tag] [--all]",
+  "          dismiss <id>",
+  "",
+  "  render  [--id <page-id>] [--mood]     rebuild html",
+  "  mood    add [--json-file <p>] [--no-download] | list | board | adopt <id> | reject <id>",
+  "  taste   add [--json-file <p>] | list | compile | retire <id>",
+  "",
+  "  home                                  print the data root",
+  "",
+  "  --format json                         machine-readable output",
+  "  SOCRATES_HOME                         data root (default ~/.socrates)",
+].join("\n");
 
 async function main() {
-  // Groups are either `<group> <command>` (taste add) or flat `<group> --flags`
-  // (capture). The second token is only a command if it is not a flag.
-  const [group, ...tail] = process.argv.slice(2);
-  const hasCommand = Boolean(tail[0]) && !tail[0].startsWith("--");
-  const command = hasCommand ? tail[0] : null;
-  const { flags, positional } = parseArgs(hasCommand ? tail.slice(1) : tail);
-  const home = resolveHome();
-  // NOTE: for `taste add`, --json is the *input* payload. Output format is
-  // controlled separately so the two never get tangled.
+  // Parse the whole argv so flags can appear before, between or after the
+  // positional words.
+  const parsed = parseArgs(process.argv.slice(2));
+  const [group, command, ...positional] = parsed.positional;
+  const flags = parsed.flags;
   const asJson = flags.format === "json" || process.env.SOCRATES_FORMAT === "json";
+  const home = () => resolveHome();
 
   if (!group || group === "help" || flags.help) {
-    out(
-      [
-        "socrates — learn from the work you already did",
-        "",
-        "  socrates home                        print the resolved data root",
-        "",
-        "  socrates capture [--dir PATH] [--dry-run]  rebuild events.jsonl from Pi sessions",
-        "  socrates extract [--session ID] [--list]  print a session as a digest",
-        "",
-        "  socrates taste add [--json '<json>']     record preference feedback (or stdin)",
-        "  socrates taste list [--status --level --tag]",
-        "  socrates taste compile                   regenerate TASTE.md",
-        "  socrates taste retire <id>               retire a statement",
-        "",
-        "  socrates moments add [--json '<json>']   record a learning moment (or stdin)",
-        "  socrates moments list [--session --kind --status --limit]",
-        "  socrates moments dismiss <id>            append-only rejection",
-        "",
-        "  --format json                        machine-readable output",
-        "  SOCRATES_HOME                        data root (default ~/.socrates)",
-        "  socrates home                          print the resolved data root",
-        "",
-        "  taste   add [--json '<json>']          record preference feedback (or stdin)",
-        "          list [--status --level --tag]",
-        "          compile                        regenerate TASTE.md",
-        "          retire <id>",
-        "",
-        "  card    add [--json '<json>'] [--no-render]",
-        "          list [--status --topic --tag]",
-        "          review <id> --status known|learning|seen|retired",
-        "",
-        "  render  [--id <card-id>] [--mood]        rebuild html (all cards by default)",
-        "",
-        "  mood    add [--json '<json>'] [--no-download]",
-        "          list [--status --tag --applies-to]",
-        "          board                          render site/mood.html",
-        "          adopt <id> | reject <id>",
-        "",
-        "  --format json                          machine-readable output",
-        "  SOCRATES_HOME                          data root (default ~/.socrates)",
-      ].join("\n"),
-      false,
-    );
+    out(HELP, false);
     return;
   }
 
-  if (group === "home") {
-    out({ home: resolveHome(), paths: paths() }, true);
-    return;
-  }
+  switch (group) {
+    case "home":
+      out({ home: home(), paths: paths(home()) }, true);
+      return;
 
-  if (group === "capture") {
-    captureEvents(flags, asJson);
-    return;
-  }
-
-  if (group === "extract") {
-    const result = extract(flags);
-    if (asJson) out(result, true);
-    else if (Array.isArray(result)) {
-      out(
-        result
-          .map((s) =>
-            [
-              s.session.slice(0, 8),
-              String(s.eventCount).padStart(4),
-              s.hasConversation ? "     " : "none ",
-              (s.endedAt ?? "").slice(0, 16),
-              s.cwd,
-            ].join("  "),
-          )
-          .join("\n"),
-        false,
-      );
-    } else if (result.digest) out(result.digest, false);
-    else out(`skipped ${result.session.slice(0, 8)}: ${result.skipped}`, false);
-    return;
-  }
-
-  if (group === "moments") {
-    switch (command) {
-      case "add":
-        out(await momentsAdd(flags), asJson);
-        break;
-      case "list": {
-        const moments = momentsList(flags);
-        if (!moments.length) noteEmpty("moments", paths(home).moments);
-        out(moments, asJson);
-        break;
-      }
-      case "dismiss":
-        out(momentsDismiss(positional[0] ?? flags.id), asJson);
-        break;
-      default:
-        fail(`unknown moments command: ${command ?? "(none)"}`);
+    case "capture": {
+      const result = captureRun(flags);
+      out(asJson ? result : captureReport(result), asJson);
+      return;
     }
-    return;
-  }
 
-  if (group === "render") {
-    const home = resolveHome();
-    ensureDirs(home);
-    try {
-      if (flags.mood) out({ wrote: renderMoodBoardTo(home) }, asJson);
-      else out(flags.id ? { wrote: renderOne(flags.id, home) } : renderAll(home), asJson);
-    } catch (error) {
-      fail(error.message);
-    }
-    return;
-  }
-
-  if (group === "mood") {
-    switch (command) {
-      case "add":
-        out(await moodAdd(flags), asJson);
-        return;
-      case "list":
+    case "extract": {
+      const result = extract(flags);
+      if (asJson) out(result, true);
+      else if (Array.isArray(result)) {
         out(
-          listMoods(resolveHome(), {
-            status: flags.status,
-            tag: flags.tag,
-            appliesTo: flags["applies-to"],
-          }),
-          asJson,
+          result
+            .map((s) =>
+              [
+                String(s.session ?? "?").slice(0, 8),
+                String(s.eventCount ?? 0).padStart(4),
+                s.hasConversation ? "     " : "none ",
+                String(s.endedAt ?? "").slice(0, 16),
+                s.cwd ?? "",
+              ].join("  "),
+            )
+            .join("\n"),
+          false,
         );
-        return;
-      case "board":
-        out(moodBoard(flags), asJson);
-        return;
-      case "adopt":
-      case "reject": {
-        const home = resolveHome();
-        try {
-          const status = command === "adopt" ? "adopted" : "rejected";
-          const mood = setMoodStatus(positional[0] ?? flags.id, status, home);
-          renderMoodBoardTo(home);
-          out(mood, asJson);
-        } catch (error) {
-          fail(error.message);
-        }
-        return;
-      }
-      default:
-        fail(`unknown mood command: ${command ?? "(none)"}`);
+      } else out(result.digest, false);
+      return;
     }
-  }
 
-  if (group === "card") {
-    switch (command) {
-      case "add":
-        out(await cardAdd(flags), asJson);
-        return;
-      case "list":
-        out(cardList(flags), asJson);
-        return;
-      case "review": {
-        const home = resolveHome();
-        try {
-          out(reviewCard(positional[0] ?? flags.id, positional[1] ?? flags.status, home), asJson);
-        } catch (error) {
-          fail(error.message);
+    case "moments":
+      switch (command) {
+        case "add":
+          out(await momentsAdd(flags), asJson);
+          return;
+        case "list": {
+          const moments = momentsList(flags);
+          if (!moments.length) noteEmpty("moments", paths(home()).moments);
+          out(moments, asJson);
+          return;
         }
-        return;
+        case "dismiss":
+          out(momentsDismiss(positional[0] ?? flags.id), asJson);
+          return;
+        default:
+          fail(`unknown moments command: ${command ?? "(none)"}`);
       }
-      default:
-        fail(`unknown card command: ${command ?? "(none)"}`);
+      return;
+
+    case "page":
+      switch (command) {
+        case "add":
+          out(await pageAdd(flags), asJson);
+          return;
+        case "list":
+          out(pageList(flags), asJson);
+          return;
+        case "dismiss": {
+          const id = positional[0] ?? flags.id;
+          if (!id) fail("page dismiss needs an id");
+          out(dismissPage(id, home()), asJson);
+          return;
+        }
+        default:
+          fail(`unknown page command: ${command ?? "(none)"}`);
+      }
+      return;
+
+    case "render": {
+      const h = home();
+      ensureDirs(h);
+      try {
+        if (flags.mood) out({ wrote: renderMoodBoardTo(h) }, asJson);
+        else if (typeof flags.id === "string") out({ wrote: renderOne(flags.id, h) }, asJson);
+        else out(renderAll(h), asJson);
+      } catch (error) {
+        fail(error.message);
+      }
+      return;
     }
-  }
 
-  if (group !== "taste") fail(`unknown command group: ${group}`);
-
-  switch (command) {
-    case "add":
-      out(await tasteAdd(flags), asJson);
-      break;
-    case "list":
-      {
-        const statements = tasteList(flags);
-        if (!statements.length) noteEmpty("statements", paths(home).statements);
-        out(statements, asJson);
+    case "mood":
+      switch (command) {
+        case "add":
+          out(await moodAdd(flags), asJson);
+          return;
+        case "list":
+          out(
+            listMoods(home(), {
+              status: flags.status,
+              tag: flags.tag,
+              appliesTo: flags["applies-to"],
+            }),
+            asJson,
+          );
+          return;
+        case "board":
+          out({ wrote: renderMoodBoardTo(home()), items: listMoods(home()).length }, asJson);
+          return;
+        case "adopt":
+        case "reject": {
+          const id = positional[0] ?? flags.id;
+          try {
+            out(setMoodStatus(id, command === "adopt" ? "adopted" : "rejected", home()), asJson);
+            renderMoodBoardTo(home());
+          } catch (error) {
+            fail(error.message);
+          }
+          return;
+        }
+        default:
+          fail(`unknown mood command: ${command ?? "(none)"}`);
       }
-      break;
-    case "compile":
-      out(tasteCompile(), asJson);
-      break;
-    case "retire":
-      out(tasteRetire(positional[0] ?? flags.id), asJson);
-      break;
+      return;
+
+    case "taste":
+      switch (command) {
+        case "add":
+          out(await tasteAdd(flags), asJson);
+          return;
+        case "list":
+          out(tasteList(flags), asJson);
+          return;
+        case "compile":
+          out(tasteCompile(), asJson);
+          return;
+        case "retire":
+          out(tasteRetire(positional[0] ?? flags.id), asJson);
+          return;
+        default:
+          fail(`unknown taste command: ${command ?? "(none)"}`);
+      }
+      return;
+
     default:
-      fail(`unknown taste command: ${command ?? "(none)"}`);
+      fail(`unknown command group: ${group}`);
   }
 }
 
