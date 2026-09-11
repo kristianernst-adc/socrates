@@ -157,9 +157,11 @@ plugin/bin/socrates-nightly -h           # options and environment
 ```
 
 It resolves `socrates` and `pi` itself instead of trusting `PATH`, logs every run to
-`<data root>/nightly.log`, never exports `SOCRATES_HOME`, and skips the model calls when the
-store is unchanged since the last run — so a nightly job does not re-extract the same session
-and pay for it.
+`<data root>/nightly.log`, never exports `SOCRATES_HOME`, and runs each model step only when
+there is work for it — `extract --pending` (a session with content and no moments yet) and
+`moments list --uncarded` (a moment with no card). So a nightly job never re-extracts a session
+it already read, which would append a second copy of every moment, and never pays for a no-op
+run.
 
 ```cron
 30 3 * * *  $HOME/src/socrates/plugin/bin/socrates-nightly

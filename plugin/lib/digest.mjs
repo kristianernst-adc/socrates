@@ -205,6 +205,57 @@ export function pickSession(events, selector) {
   return sessions.find((entry) => entry.session.startsWith(selector)) ?? null;
 }
 
+/**
+ * Which sessions have already produced moments.
+ *
+ * A moment records where it came from in `origin.sessionId`, so the store already
+ * knows what has been read. There is no separate extraction ledger to keep in
+ * sync — and nothing to go stale when moments are dismissed or amended.
+ */
+export function extractedSessions(moments) {
+  const ids = new Set();
+  for (const moment of moments) {
+    const id = moment?.origin?.sessionId;
+    if (id) ids.add(id);
+  }
+  return ids;
+}
+
+/**
+ * Whether a session has been extracted, tolerating a shortened id.
+ *
+ * `extract --list` prints ids truncated to 8 characters, and a model or a user
+ * may well record one of those as `origin.sessionId`. Matching exactly would then
+ * quietly stop deduping — the failure mode is a duplicate, not an error, so it
+ * would go unnoticed. Prefix matching is the safe direction: the worst case is
+ * treating a session as read when it was not, which loses nothing.
+ */
+export function isExtracted(extracted, session) {
+  if (extracted.has(session)) return true;
+  for (const id of extracted) {
+    if (session.startsWith(id)) return true;
+  }
+  return false;
+}
+
+/**
+ * Sessions worth extracting that have not produced a moment yet.
+ *
+ * This is what makes re-extraction idempotent. Without it a nightly run re-reads
+ * the session it already read, and appends a fresh copy of every moment, because
+ * ids come from `makeId` — so the duplicates are invisible until you count them.
+ *
+ * A session that legitimately yielded nothing stays pending. Recording
+ * "considered, nothing found" would need a real ledger; the cost of not having one
+ * is re-reading a quiet session, not a wrong one.
+ */
+export function pendingSessions(events, moments) {
+  const done = extractedSessions(moments);
+  return listSessions(events).filter(
+    (entry) => entry.hasConversation && !isExtracted(done, entry.session),
+  );
+}
+
 /** Convenience for the CLI: read the store and render the chosen session. */
 export function digestFor(eventsFile, selector) {
   const picked = pickSession(readJsonl(eventsFile), selector);

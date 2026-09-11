@@ -3,7 +3,7 @@
 # user runs the same one instead of pasting a script out of the README.
 #
 #   capture            rebuild events.jsonl from the harness transcripts   (free)
-#   extract-moments    turn the newest session into moments                 (model)
+#   extract-moments    turn the newest un-read session into moments         (model)
 #   generate-learning  turn un-carded moments into cards                    (model)
 #   render             rebuild the html                                     (free)
 #
@@ -34,11 +34,12 @@
 #      ~/.socrates for the rest of the run, and an empty scratch root returns
 #      `[]` — which looks exactly like "nothing recorded yet".
 #
-#   2. It skips the model calls when the store is unchanged since the last run,
-#      so a nightly cron does not re-extract the same session and pay for it.
-#      NOTE: that guard is coarse — a whole-store fingerprint. It prevents no-op
-#      runs, not duplicates inside a session that changed. Real dedupe belongs
-#      with the moments model.
+#   2. It asks the store what still needs doing instead of guessing from
+#      timestamps, and runs each model step only when there is work for it:
+#      `extract --pending` (a session with content and no moments yet) and
+#      `moments list --uncarded` (a moment with no card). So a nightly job never
+#      re-extracts a session it already read — which would append a second copy
+#      of every moment, because ids are random — and never pays for a no-op run.
 #
 # Auth is the catch for any unattended run, and this script cannot fix it: an
 # OAuth provider whose refresh token has expired fails at 3am with nobody
@@ -125,18 +126,13 @@ store_paths=$("$SOCRATES" home | node -e '
 let s = "";
 process.stdin.on("data", (d) => (s += d));
 process.stdin.on("end", () => {
-  const p = JSON.parse(s).paths;
-  process.stdout.write([p.home, p.events, p.moments].join("\n") + "\n");
+  process.stdout.write(JSON.parse(s).paths.home + "\n");
 });
 ')
 
 ROOT=""
-EVENTS=""
-MOMENTS=""
 {
   IFS= read -r ROOT || true
-  IFS= read -r EVENTS || true
-  IFS= read -r MOMENTS || true
 } <<EOF
 $store_paths
 EOF
@@ -148,7 +144,6 @@ fi
 
 LOG=${SOCRATES_LOG:-$ROOT/nightly.log}
 mkdir -p "$(dirname -- "$LOG")"
-FP_FILE="$ROOT/.nightly-fingerprint"
 
 log() {
   line="$(date '+%Y-%m-%dT%H:%M:%S%z') $*"
@@ -199,13 +194,33 @@ run_model() {
   fi
 }
 
-# Whole-store fingerprint. Coarse on purpose: cheap, and enough to tell "nothing
-# happened since last night" from "something happened".
-fingerprint() {
-  {
-    cat "$EVENTS" 2>/dev/null || true
-    cat "$MOMENTS" 2>/dev/null || true
-  } | cksum
+# Count a JSON array on stdin; 0 on anything unreadable, so a broken read skips a
+# model call rather than firing one on a guess.
+count_json_array() {
+  node -e '
+let s = "";
+process.stdin.on("data", (d) => (s += d));
+process.stdin.on("end", () => {
+  let n = 0;
+  try {
+    const value = JSON.parse(s);
+    if (Array.isArray(value)) n = value.length;
+  } catch {
+    n = 0;
+  }
+  process.stdout.write(String(n));
+});
+'
+}
+
+# A session with a conversation that has not produced a moment yet.
+pending_sessions() {
+  "$SOCRATES" extract --pending --format json 2>/dev/null | count_json_array
+}
+
+# A moment that no card claims as a source.
+uncarded_moments() {
+  "$SOCRATES" moments list --uncarded --format json 2>/dev/null | count_json_array
 }
 
 # ---------------------------------------------------------------------------
@@ -232,23 +247,28 @@ if [ -z "$PI" ] || [ ! -x "$PI" ]; then
   exit 127
 fi
 
-current=$(fingerprint)
-previous=$(cat "$FP_FILE" 2>/dev/null || true)
+# --tools bash,read: the skills shell out to the CLI and read the design docs.
+# Without `read`, generate-learning cannot load the design system.
 
-if [ "$current" = "$previous" ]; then
-  log "store unchanged since last run — skipping model steps"
-else
-  # --tools bash,read: the skills shell out to the CLI and read the design docs.
-  # Without `read`, generate-learning cannot load the design system.
+pending=$(pending_sessions)
+pending=${pending:-0}
+if [ "$pending" -gt 0 ]; then
+  log "$pending session(s) with no moments yet"
   run_model "extract-moments" \
-    "Use the extract-moments skill on the most recent session. This is an unattended run: record the moments, then exit. Do not ask questions."
+    "Use the extract-moments skill. Pick the newest session from \`socrates extract --pending\` and record its moments. This is an unattended run: do not ask questions. If the session yields nothing worth recording, that is a valid outcome — say so and exit."
+else
+  log "every session with content has moments — skipping extract-moments"
+fi
 
+# Counted after extraction, so moments recorded a moment ago are included.
+uncarded=$(uncarded_moments)
+uncarded=${uncarded:-0}
+if [ "$uncarded" -gt 0 ]; then
+  log "$uncarded moment(s) without a card"
   run_model "generate-learning" \
-    "Use the generate-learning skill on the newest moment that has no card yet. This is an unattended run: create the card, render it, then exit. Do not ask questions. If nothing is worth a card, say so and exit."
-
-  if [ "$DRY_RUN" -eq 0 ]; then
-    printf '%s\n' "$current" >"$FP_FILE"
-  fi
+    "Use the generate-learning skill on the newest moment from \`socrates moments list --uncarded\`. This is an unattended run: create the card, render it, then exit. Do not ask questions. If nothing is worth a card, say so and exit."
+else
+  log "no un-carded moments — skipping generate-learning"
 fi
 
 run_step "render" "$SOCRATES" render

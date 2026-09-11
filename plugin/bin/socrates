@@ -29,7 +29,7 @@ import {
 import { normalizeMoment } from "../lib/model.mjs";
 import { compile, recordFeedback } from "../lib/taste.mjs";
 import { capture, piSessionsDir } from "../lib/capture.mjs";
-import { listSessions, pickSession, renderDigest } from "../lib/digest.mjs";
+import { isExtracted, listSessions, pendingSessions, pickSession, renderDigest, extractedSessions } from "../lib/digest.mjs";
 
 function parseArgs(argv) {
   const flags = {};
@@ -244,6 +244,14 @@ function momentsList(flags) {
   if (flags.session) moments = moments.filter((m) => m.origin?.sessionId?.startsWith(flags.session));
   if (flags.kind) moments = moments.filter((m) => m.kind === flags.kind);
   if (flags.status) moments = moments.filter((m) => m.status === flags.status);
+  // Which moments still owe a card. A card claims its sources in
+  // provenance.moments, so "has a card" is a question the store can answer.
+  if (flags.uncarded === true) {
+    const carded = new Set(
+      readLatestById(paths(home).cards).flatMap((card) => card.provenance?.moments ?? []),
+    );
+    moments = moments.filter((m) => !carded.has(m.id));
+  }
   return moments
     .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
     .slice(0, Number(flags.limit) || 20);
@@ -295,8 +303,18 @@ function extract(flags) {
   const events = readJsonl(paths(home).events);
   if (!events.length) fail("no events yet — run `socrates capture` first");
 
-  if (flags.list === true) {
-    return listSessions(events).map(({ events: _events, ...rest }) => rest);
+  const moments = readLatestById(paths(home).moments);
+  const done = extractedSessions(moments);
+
+  if (flags.list === true || flags.pending === true) {
+    // `--pending` is the safe default choice: a session that already produced
+    // moments will produce copies of them, not better ones.
+    const sessions =
+      flags.pending === true ? pendingSessions(events, moments) : listSessions(events);
+    return sessions.map(({ events: _events, ...rest }) => ({
+      ...rest,
+      extracted: isExtracted(done, rest.session),
+    }));
   }
 
   const selector = typeof flags.session === "string" ? flags.session : "latest";
@@ -336,7 +354,7 @@ async function main() {
         "  socrates home                        print the resolved data root",
         "",
         "  socrates capture [--dir PATH] [--dry-run]  rebuild events.jsonl from Pi sessions",
-        "  socrates extract [--session ID] [--list]  print a session as a digest",
+        "  socrates extract [--session ID] [--list] [--pending]  print a session as a digest",
         "",
         "  socrates taste add [--json '<json>']     record preference feedback (or stdin)",
         "  socrates taste list [--status --level --tag]",
@@ -344,7 +362,7 @@ async function main() {
         "  socrates taste retire <id>               retire a statement",
         "",
         "  socrates moments add [--json '<json>']   record a learning moment (or stdin)",
-        "  socrates moments list [--session --kind --status --limit]",
+        "  socrates moments list [--session --kind --status --uncarded --limit]",
         "  socrates moments dismiss <id>            append-only rejection",
         "",
         "  --format json                        machine-readable output",
@@ -396,6 +414,7 @@ async function main() {
               s.session.slice(0, 8),
               String(s.eventCount).padStart(4),
               s.hasConversation ? "     " : "none ",
+              s.extracted ? "done" : "new ",
               (s.endedAt ?? "").slice(0, 16),
               s.cwd,
             ].join("  "),

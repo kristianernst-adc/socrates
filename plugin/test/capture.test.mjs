@@ -203,6 +203,29 @@ test("moments round-trip through the CLI, and a dismissal appends rather than re
   assert.equal(readJsonl(join(home, "moments.jsonl")).length, 2);
 });
 
+test("moments list --uncarded hides the moments a card claims as a source", () => {
+  const home = tempHome();
+  const moment = JSON.parse(run(home, ["moments", "add"], JSON.stringify({
+    kind: "agent_explained",
+    title: "Fold on read",
+    summary: "Latest record per id wins.",
+    evidence: [{ events: ["ev_1_1_0"] }],
+  })));
+
+  const uncarded = () => JSON.parse(run(home, ["moments", "list", "--uncarded", "--format", "json"]));
+  assert.equal(uncarded().length, 1, "a moment with no card still owes one");
+
+  run(home, ["card", "add", "--no-render"], JSON.stringify({
+    title: "Fold on read",
+    blocks: [{ type: "explanation", text: "The last record for an id wins." }],
+    provenance: { moments: [moment.id] },
+  }));
+
+  assert.equal(uncarded().length, 0, "a carded moment must not be offered again");
+  // The filter is a view, not a delete.
+  assert.equal(JSON.parse(run(home, ["moments", "list", "--format", "json"])).length, 1);
+});
+
 test("moments add fills provenance from the surrounding Pi session", () => {
   const home = tempHome();
   const created = JSON.parse(run(home, ["moments", "add"], JSON.stringify({

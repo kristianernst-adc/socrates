@@ -10,7 +10,16 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 
-import { CAPS, pickSession, previewArgs, renderDigest, substance } from "../lib/digest.mjs";
+import {
+  CAPS,
+  extractedSessions,
+  isExtracted,
+  pendingSessions,
+  pickSession,
+  previewArgs,
+  renderDigest,
+  substance,
+} from "../lib/digest.mjs";
 import { normalizeEvent } from "../lib/model.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -46,6 +55,24 @@ function withStore(events, args) {
     encoding: "utf8",
   });
   return stdout;
+}
+
+/** Write events and moments into a store directory, and return the directory. */
+function store(events, moments = []) {
+  const home = mkdtempSync(join(tmpdir(), "socrates-"));
+  writeFileSync(join(home, "events.jsonl"), events.map((e) => JSON.stringify(e)).join("\n") + "\n", "utf8");
+  if (moments.length) {
+    writeFileSync(join(home, "moments.jsonl"), moments.map((m) => JSON.stringify(m)).join("\n") + "\n", "utf8");
+  }
+  return home;
+}
+
+/** Run the CLI against an already-written store directory. */
+function cli(home, args) {
+  return execFileSync(process.execPath, [CLI, ...args], {
+    env: { ...process.env, SOCRATES_HOME: home, PLUGIN_DATA: "" },
+    encoding: "utf8",
+  });
 }
 
 // --- argument rendering ------------------------------------------------------
@@ -209,7 +236,7 @@ test("extract prints the digest, and --list summarises", () => {
   ];
 
   assert.match(withStore(events, ["extract"]), /# session aaaa1111-x/);
-  assert.match(withStore(events, ["extract", "--list"]), /aaaa1111\s+2\s+2026-09-11T09:21/);
+  assert.match(withStore(events, ["extract", "--list"]), /aaaa1111\s+2\s+new\s+2026-09-11T09:21/);
 });
 
 test("extract refuses a session with nothing to learn", () => {
@@ -220,4 +247,65 @@ test("extract refuses a session with nothing to learn", () => {
   ];
 
   assert.match(withStore(events, ["extract"]), /skipped 01a08fb2: no conversation/);
+});
+
+// --- extraction is idempotent ------------------------------------------------
+//
+// Without this, a nightly run re-reads the session it already read and appends a
+// second copy of every moment, because ids come from `makeId`. The duplicates are
+// invisible until you count them, so the guard is worth pinning down.
+
+test("extractedSessions collects the sessions moments came from", () => {
+  const moments = [
+    { origin: { sessionId: "s1" } },
+    { origin: { sessionId: "s2" } },
+    { origin: { sessionId: "s1" } },
+    { origin: {} },
+    {},
+  ];
+  assert.deepEqual([...extractedSessions(moments)].sort(), ["s1", "s2"]);
+});
+
+test("isExtracted tolerates the shortened id that --list prints", () => {
+  const done = extractedSessions([{ origin: { sessionId: "01a08fe7" } }]);
+  assert.equal(isExtracted(done, "01a08fe7-5ec2-703e-a8ea-dfc8e89f244d"), true);
+  assert.equal(isExtracted(done, "01a08fe7"), true);
+  assert.equal(isExtracted(done, "01a09039-88cc"), false);
+});
+
+test("pendingSessions skips extracted sessions and ones with nothing to read", () => {
+  freshSeq();
+  const events = [
+    ev("user_message", { actor: "user", text: "hi", session: "aaaa1111-x" }),
+    ev("assistant_message", { text: "hello", session: "aaaa1111-x" }),
+    ev("user_message", { actor: "user", text: "hi", session: "bbbb2222-y" }),
+    ev("assistant_message", { text: "hello", session: "bbbb2222-y" }),
+    ev("error", { text: "boom", session: "cccc3333-z" }),
+  ];
+
+  const pending = pendingSessions(events, [{ origin: { sessionId: "aaaa1111-x" } }]);
+  assert.deepEqual(pending.map((entry) => entry.session), ["bbbb2222-y"]);
+});
+
+test("--pending hides sessions that already produced moments", () => {
+  freshSeq();
+  const events = [
+    ev("user_message", { actor: "user", text: "hi", session: "aaaa1111-x" }),
+    ev("assistant_message", { text: "hello", session: "aaaa1111-x" }),
+    ev("user_message", { actor: "user", text: "hi", session: "bbbb2222-y" }),
+    ev("assistant_message", { text: "hello", session: "bbbb2222-y" }),
+  ];
+  const home = store(events, [{ id: "mo_1", origin: { sessionId: "aaaa1111-x" } }]);
+
+  const pending = JSON.parse(cli(home, ["extract", "--pending", "--format", "json"]));
+  assert.deepEqual(pending.map((entry) => entry.session), ["bbbb2222-y"]);
+
+  // --list still shows everything, but says which ones are done.
+  const all = JSON.parse(cli(home, ["extract", "--list", "--format", "json"]));
+  assert.deepEqual(
+    all.map((entry) => [entry.session, entry.extracted]),
+    [["aaaa1111-x", true], ["bbbb2222-y", false]],
+  );
+  assert.match(cli(home, ["extract", "--list"]), /aaaa1111\s+2\s+done/);
+  assert.match(cli(home, ["extract", "--list"]), /bbbb2222\s+2\s+new/);
 });
