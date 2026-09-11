@@ -1,0 +1,168 @@
+#!/usr/bin/env node
+// Socrates CLI — the automation surface.
+//
+// The skill is the interactive surface; this is what the skill, cron jobs and
+// scripts actually call. Keep it boring and scriptable.
+//
+// STUB: only the taste (personalization) commands exist so far. Capture/ingest
+// commands belong here too once the engine lands.
+
+import { createInterface } from "node:readline";
+import {
+  appendJsonl,
+  ensureDirs,
+  paths,
+  readLatestById,
+  resolveHome,
+  writeAtomic,
+} from "../lib/store.mjs";
+import { compile, recordFeedback } from "../lib/taste.mjs";
+
+function parseArgs(argv) {
+  const flags = {};
+  const positional = [];
+  for (let i = 0; i < argv.length; i += 1) {
+    const token = argv[i];
+    if (token.startsWith("--")) {
+      const [name, inline] = token.slice(2).split("=");
+      if (inline !== undefined) {
+        flags[name] = inline;
+      } else if (argv[i + 1] && !argv[i + 1].startsWith("--")) {
+        flags[name] = argv[i + 1];
+        i += 1;
+      } else {
+        flags[name] = true;
+      }
+    } else {
+      positional.push(token);
+    }
+  }
+  return { flags, positional };
+}
+
+async function readStdin() {
+  const chunks = [];
+  for await (const chunk of process.stdin) chunks.push(chunk);
+  return Buffer.concat(chunks).toString("utf8").trim();
+}
+
+function out(value, asJson) {
+  if (asJson) {
+    process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
+    return;
+  }
+  process.stdout.write(
+    typeof value === "string" ? `${value}\n` : `${JSON.stringify(value, null, 2)}\n`,
+  );
+}
+
+function fail(message) {
+  process.stderr.write(`socrates: ${message}\n`);
+  process.exit(1);
+}
+
+async function tasteAdd(flags) {
+  const raw = typeof flags.json === "string" ? flags.json : await readStdin();
+  if (!raw) fail("taste add expects a JSON object on stdin or via --json");
+
+  let payload;
+  try {
+    payload = JSON.parse(raw);
+  } catch (error) {
+    fail(`could not parse JSON input: ${error.message}`);
+  }
+
+  if (flags.harness) payload.harness = flags.harness;
+  if (process.env.PI_PROVIDER) payload.harness = payload.harness ?? "pi";
+
+  const home = resolveHome();
+  ensureDirs(home);
+  try {
+    return recordFeedback(payload, home);
+  } catch (error) {
+    fail(error.message);
+  }
+}
+
+function tasteList(flags) {
+  const home = resolveHome();
+  let statements = readLatestById(paths(home).statements);
+  if (flags.status) statements = statements.filter((s) => s.status === flags.status);
+  if (flags.level) statements = statements.filter((s) => s.scope.level === flags.level);
+  if (flags.tag) statements = statements.filter((s) => s.tags?.includes(flags.tag));
+  return statements.sort((a, b) => b.confidence - a.confidence);
+}
+
+function tasteCompile() {
+  const home = resolveHome();
+  ensureDirs(home);
+  const statements = readLatestById(paths(home).statements);
+  const markdown = compile(statements);
+  writeAtomic(paths(home).compiled, markdown);
+  return { wrote: paths(home).compiled, statements: statements.length };
+}
+
+function tasteRetire(id) {
+  if (!id) fail("taste retire needs a statement id");
+  const home = resolveHome();
+  const statements = readLatestById(paths(home).statements);
+  const statement = statements.find((s) => s.id === id);
+  if (!statement) fail(`no statement with id ${id}`);
+  const retired = { ...statement, status: "retired", updatedAt: new Date().toISOString() };
+  appendJsonl(paths(home).statements, retired);
+  return retired;
+}
+
+async function main() {
+  const [group, command, ...rest] = process.argv.slice(2);
+  const { flags, positional } = parseArgs(rest);
+  // NOTE: for `taste add`, --json is the *input* payload. Output format is
+  // controlled separately so the two never get tangled.
+  const asJson = flags.format === "json" || process.env.SOCRATES_FORMAT === "json";
+
+  if (!group || group === "help" || flags.help) {
+    out(
+      [
+        "socrates — learn from the work you already did",
+        "",
+        "  socrates home                        print the resolved data root",
+        "  socrates taste add [--json '<json>']  record preference feedback (or stdin)",
+        "  socrates taste list|compile|retire       see --help on each for flags",
+        "",
+        "  --format json                        machine-readable output",
+        "  SOCRATES_HOME                        data root (default ~/.socrates)",
+        "  socrates taste list [--status --level --tag]",
+        "  socrates taste compile               regenerate TASTE.md",
+        "  socrates taste retire <id>           retire a statement",
+      ].join("\n"),
+      false,
+    );
+    return;
+  }
+
+  if (group === "home") {
+    out({ home: resolveHome(), paths: paths() }, true);
+    return;
+  }
+
+  if (group !== "taste") fail(`unknown command group: ${group}`);
+
+  switch (command) {
+    case "add":
+      out(await tasteAdd(flags), asJson);
+      break;
+    case "list":
+      out(tasteList(flags), asJson);
+      break;
+    case "compile":
+      out(tasteCompile(), asJson);
+      break;
+    case "retire":
+      out(tasteRetire(positional[0] ?? flags.id), asJson);
+      break;
+    default:
+      fail(`unknown taste command: ${command ?? "(none)"}`);
+  }
+}
+
+main().catch((error) => fail(error.stack ?? String(error)));

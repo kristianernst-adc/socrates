@@ -1,0 +1,88 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://socrates.local/schemas/taste.schema.json",
+  "title": "Socrates taste record",
+  "description": "Either a raw feedback record (what the user said) or a derived statement (an actionable preference).",
+  "oneOf": [{ "$ref": "#/$defs/feedback" }, { "$ref": "#/$defs/statement" }],
+  "$defs": {
+    "polarity": { "enum": ["prefer", "avoid"] },
+    "scopeLevel": { "enum": ["global", "language", "repo", "task", "one-off"] },
+    "source": { "enum": ["user", "inferred"] },
+    "status": { "enum": ["active", "proposed", "retired"] },
+    "scope": {
+      "type": "object",
+      "required": ["level"],
+      "properties": {
+        "level": { "$ref": "#/$defs/scopeLevel" },
+        "match": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "language": { "type": "string" },
+            "repo": { "type": "string" },
+            "cwd": { "type": "string" },
+            "taskKind": { "type": "string" }
+          }
+        }
+      }
+    },
+    "feedback": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "id", "createdAt", "polarity", "about", "statement", "scope", "source"],
+      "properties": {
+        "type": { "const": "feedback" },
+        "id": { "type": "string", "pattern": "^fb_" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "polarity": { "$ref": "#/$defs/polarity" },
+        "intensity": { "type": "integer", "minimum": 1, "maximum": 3 },
+        "about": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "statement": { "type": "string", "minLength": 1, "maxLength": 300 },
+        "rationale": { "type": "string", "maxLength": 1000 },
+        "evidence": { "type": "string", "maxLength": 1000 },
+        "scope": { "$ref": "#/$defs/scope" },
+        "scopeHint": { "type": "string", "maxLength": 200 },
+        "source": { "$ref": "#/$defs/source" },
+        "tags": { "type": "array", "maxItems": 8, "items": { "type": "string" } },
+        "capturedBy": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "harness": { "type": "string" },
+            "model": { "type": "string" },
+            "sessionId": { "type": "string" },
+            "cwd": { "type": "string" }
+          }
+        }
+      }
+    },
+    "statement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type", "id", "createdAt", "updatedAt", "firstSeen", "lastSeen",
+        "status", "polarity", "statement", "scope", "source",
+        "observations", "confidence", "support", "conflictsWith"
+      ],
+      "properties": {
+        "type": { "const": "statement" },
+        "id": { "type": "string", "pattern": "^tst_" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "firstSeen": { "type": "string", "format": "date-time" },
+        "lastSeen": { "type": "string", "format": "date-time" },
+        "status": { "$ref": "#/$defs/status" },
+        "polarity": { "$ref": "#/$defs/polarity" },
+        "statement": { "type": "string", "minLength": 1, "maxLength": 300 },
+        "about": { "type": "string", "maxLength": 200 },
+        "scope": { "$ref": "#/$defs/scope" },
+        "source": { "$ref": "#/$defs/source" },
+        "observations": { "type": "integer", "minimum": 1 },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "support": { "type": "array", "items": { "type": "string", "pattern": "^fb_" } },
+        "conflictsWith": { "type": "array", "items": { "type": "string", "pattern": "^tst_" } },
+        "tags": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  }
+}

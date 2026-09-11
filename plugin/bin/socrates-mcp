@@ -1,0 +1,212 @@
+#!/usr/bin/env node
+// Socrates MCP server (stdio transport).
+//
+// This is the portable tool surface: any MCP-capable client can call these
+// without knowing anything about our CLI. Harnesses without MCP (Pi) use the
+// skill + CLI path instead.
+//
+// STUB: three tools, no resources/prompts, no auth. Enough to be real.
+
+import { createInterface } from "node:readline";
+import { ensureDirs, paths, readLatestById, resolveHome } from "../lib/store.mjs";
+import { compile, recordFeedback } from "../lib/taste.mjs";
+
+const SERVER = { name: "socrates", version: "0.1.0" };
+const PROTOCOL_VERSION = "2025-06-18";
+
+const TOOLS = [
+  {
+    name: "update_taste",
+    description:
+      "Record a preference the user expressed about the agent's output, so future work matches their taste. Use when the user says they liked or disliked something, asks for a different style, or corrects an approach. Capture their own words in `about` and `rationale`.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        polarity: {
+          type: "string",
+          enum: ["prefer", "avoid"],
+          description: "prefer = the user wants more of this; avoid = they want less.",
+        },
+        about: {
+          type: "string",
+          description: "What the feedback is about, in one short sentence.",
+        },
+        statement: {
+          type: "string",
+          description:
+            "The preference as one actionable sentence, phrased as a rule: 'Keep commit messages terse and imperative'.",
+        },
+        rationale: {
+          type: "string",
+          description: "Why, using the user's own words where possible.",
+        },
+        evidence: {
+          type: "string",
+          description: "The concrete thing that prompted this: a file, diff, quote or command.",
+        },
+        intensity: { type: "integer", minimum: 1, maximum: 3 },
+        scope: {
+          type: "object",
+          properties: {
+            level: {
+              type: "string",
+              enum: ["global", "language", "repo", "task", "one-off"],
+            },
+            match: {
+              type: "object",
+              properties: {
+                language: { type: "string" },
+                repo: { type: "string" },
+                cwd: { type: "string" },
+                taskKind: { type: "string" },
+              },
+            },
+          },
+          required: ["level"],
+        },
+        source: {
+          type: "string",
+          enum: ["user", "inferred"],
+          description:
+            "user = they stated it as a general rule. inferred = you generalised it and it should be confirmed first.",
+        },
+        tags: { type: "array", items: { type: "string" } },
+      },
+      required: ["polarity", "about", "statement"],
+    },
+  },
+  {
+    name: "list_taste",
+    description:
+      "Read the user's recorded working preferences. Call this before making stylistic or structural choices so you follow their established taste instead of guessing.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        status: { type: "string", enum: ["active", "proposed", "retired"] },
+        level: { type: "string", enum: ["global", "language", "repo", "task", "one-off"] },
+      },
+    },
+  },
+  {
+    name: "compile_taste",
+    description: "Regenerate the compiled TASTE.md instruction block from recorded preferences.",
+    inputSchema: { type: "object", properties: {} },
+  },
+];
+
+function call(name, args = {}) {
+  const home = resolveHome();
+  switch (name) {
+    case "update_taste": {
+      ensureDirs(home);
+      const result = recordFeedback(args, home);
+      const verb = result.created ? "Recorded new preference" : "Reinforced existing preference";
+      return {
+        content: [
+          {
+            type: "text",
+            text: `${verb} (${result.feedback.polarity}): ${result.feedback.statement}`,
+          },
+        ],
+        structuredContent: {
+          feedbackId: result.feedback.id,
+          statementId: result.created ? result.statements.at(-1).id : result.matched,
+          created: result.created,
+          conflicts: result.conflicts,
+        },
+      };
+    }
+    case "list_taste": {
+      let statements = readLatestById(paths(home).statements);
+      if (args.status) statements = statements.filter((s) => s.status === args.status);
+      if (args.level) statements = statements.filter((s) => s.scope.level === args.level);
+      return {
+        content: [
+          {
+            type: "text",
+            text: statements.length
+              ? statements
+                  .map((s) => `- [${s.status}] ${s.polarity}: ${s.statement} (${s.scope.level})`)
+                  .join("\n")
+              : "No preferences recorded yet.",
+          },
+        ],
+        structuredContent: { statements },
+      };
+    }
+    case "compile_taste":
+      return {
+        content: [{ type: "text", text: "Regenerated TASTE.md." }],
+        structuredContent: compileToolResult(home),
+      };
+    default:
+      throw new Error(`Unknown tool: ${name}`);
+  }
+}
+
+function compileToolResult(home) {
+  ensureDirs(home);
+  const statements = readLatestById(paths(home).statements);
+  const markdown = compile(statements);
+  return { path: paths(home).compiled, markdown };
+}
+
+function send(message) {
+  process.stdout.write(`${JSON.stringify(message)}\n`);
+}
+
+function respond(id, result) {
+  send({ jsonrpc: "2.0", id, result });
+}
+
+function respondError(id, code, message) {
+  send({ jsonrpc: "2.0", id, error: { code, message } });
+}
+
+function handle(message) {
+  const { id, method, params } = message;
+  const isNotification = id === undefined || id === null;
+
+  switch (method) {
+    case "initialize":
+      respond(id, {
+        protocolVersion: params?.protocolVersion ?? PROTOCOL_VERSION,
+        capabilities: { tools: { listChanged: false } },
+        serverInfo: SERVER,
+        instructions:
+          "Socrates records the user's working preferences and turns past work into learning material. Use list_taste before stylistic choices and update_taste whenever the user reacts to an outcome.",
+      });
+      return;
+    case "notifications/initialized":
+    case "notifications/cancelled":
+      return;
+    case "ping":
+      respond(id, {});
+      return;
+    case "tools/list":
+      respond(id, { tools: TOOLS });
+      return;
+    case "tools/call": {
+      try {
+        const result = call(params?.name, params?.arguments ?? {});
+        respond(id, result);
+      } catch (error) {
+        respond(id, { content: [{ type: "text", text: error.message }], isError: true });
+      }
+      return;
+    }
+    default:
+      if (!isNotification) respondError(id, -32601, `Method not found: ${method}`);
+  }
+}
+
+const rl = createInterface({ input: process.stdin, crlfDelay: Number.POSITIVE_INFINITY });
+rl.on("line", (line) => {
+  const text = line.trim();
+  if (!text) return;
+  try {
+    handle(JSON.parse(text));
+  } catch {
+    send({ jsonrpc: "2.0", id: null, error: { code: -32700, message: "Parse error" } });
+  }
+});

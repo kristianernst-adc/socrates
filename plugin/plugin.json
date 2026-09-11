@@ -1,0 +1,20 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "socrates",
+  "version": "0.1.0",
+  "description": "Turns work you already did with coding agents into learning material, and learns your taste from the feedback you give it.",
+  "author": {
+    "name": "Socrates"
+  },
+  "repository": "https://github.com/kristianernst/toolbox",
+  "license": "MIT",
+  "keywords": [
+    "learning",
+    "taste",
+    "preferences",
+    "feedback",
+    "personalization",
+    "curation"
+  ],
+  "extensions": {}
+}
