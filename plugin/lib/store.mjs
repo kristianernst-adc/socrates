@@ -58,6 +58,14 @@ export function paths(home = resolveHome()) {
     // capture
     events: join(home, "events.jsonl"),
     moments: join(home, "moments.jsonl"),
+    cardsDir: join(home, "cards"),
+    cards: join(home, "cards", "cards.jsonl"),
+    moodDir: join(home, "mood"),
+    moods: join(home, "mood", "items.jsonl"),
+    moodAssets: join(home, "mood", "assets"),
+    siteDir: join(home, "site"),
+    siteIndex: join(home, "site", "index.html"),
+    siteMoodBoard: join(home, "site", "mood.html"),
   };
 }
 

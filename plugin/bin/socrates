@@ -8,6 +8,15 @@
 // ingestion, packet generation and `doctor` belong here too once the engine lands.
 
 import { createInterface } from "node:readline";
+import { listCards, recordCard, reviewCard } from "../lib/card.mjs";
+import {
+  downloadMoodAsset,
+  listMoods,
+  normalizeMood,
+  recordMood,
+  setMoodStatus,
+} from "../lib/mood.mjs";
+import { renderAll, renderMoodBoardTo, renderOne } from "../lib/render.mjs";
 import {
   appendJsonl,
   ensureDirs,
@@ -80,18 +89,18 @@ function noteEmpty(what, file) {
   }
 }
 
-async function tasteAdd(flags) {
+async function readPayload(flags, what) {
   const raw = typeof flags.json === "string" ? flags.json : await readStdin();
-  if (!raw) fail("taste add expects a JSON object on stdin or via --json");
-
-  let payload;
+  if (!raw) fail(`${what} expects a JSON object on stdin or via --json`);
   try {
-    payload = JSON.parse(raw);
+    return JSON.parse(raw);
   } catch (error) {
     fail(`could not parse JSON input: ${error.message}`);
   }
+}
 
-  if (flags.harness) payload.harness = flags.harness;
+async function tasteAdd(flags) {
+  const payload = await readPayload(flags, "taste add");
   if (process.env.PI_PROVIDER) payload.harness = payload.harness ?? "pi";
 
   const home = resolveHome();
@@ -101,6 +110,67 @@ async function tasteAdd(flags) {
   } catch (error) {
     fail(error.message);
   }
+}
+
+async function cardAdd(flags) {
+  const payload = await readPayload(flags, "card add");
+  const home = resolveHome();
+  ensureDirs(home);
+
+  // Fill in what the agent should never have to guess.
+  const provenance = payload.provenance ?? {};
+  provenance.cwd = provenance.cwd ?? process.cwd();
+  if (process.env.PI_PROVIDER) provenance.harness = provenance.harness ?? "pi";
+  if (process.env.PI_MODEL) provenance.model = provenance.model ?? process.env.PI_MODEL;
+  if (process.env.PI_SESSION_ID) provenance.sessionId = provenance.sessionId ?? process.env.PI_SESSION_ID;
+  payload.provenance = provenance;
+
+  let card;
+  try {
+    card = recordCard(payload, home);
+  } catch (error) {
+    fail(error.message);
+  }
+
+  const file = flags["no-render"] ? undefined : renderOne(card.id, home);
+  return { card, file };
+}
+
+function cardList(flags) {
+  let cards = listCards(resolveHome());
+  if (flags.status) cards = cards.filter((c) => c.review.status === flags.status);
+  if (flags.topic) cards = cards.filter((c) => c.topic === flags.topic);
+  if (flags.tag) cards = cards.filter((c) => c.tags.includes(flags.tag));
+  return cards.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+}
+
+async function moodAdd(flags) {
+  const payload = await readPayload(flags, "mood add");
+  const home = resolveHome();
+  ensureDirs(home);
+
+  let mood;
+  try {
+    mood = normalizeMood(payload);
+  } catch (error) {
+    fail(error.message);
+  }
+
+  // Downloading is best effort: a dead link must not lose the reference.
+  let download = { downloaded: false, reason: "skipped" };
+  if (!flags["no-download"]) {
+    download = await downloadMoodAsset(mood, home);
+    mood = download.mood;
+  }
+
+  recordMood(mood, home);
+  return { mood, downloaded: download.downloaded, reason: download.reason };
+}
+
+function moodBoard(flags) {
+  const home = resolveHome();
+  ensureDirs(home);
+  return { wrote: renderMoodBoardTo(home), items: listMoods(home).length };
 }
 
 function tasteList(flags) {
@@ -279,6 +349,26 @@ async function main() {
         "",
         "  --format json                        machine-readable output",
         "  SOCRATES_HOME                        data root (default ~/.socrates)",
+        "  socrates home                          print the resolved data root",
+        "",
+        "  taste   add [--json '<json>']          record preference feedback (or stdin)",
+        "          list [--status --level --tag]",
+        "          compile                        regenerate TASTE.md",
+        "          retire <id>",
+        "",
+        "  card    add [--json '<json>'] [--no-render]",
+        "          list [--status --topic --tag]",
+        "          review <id> --status known|learning|seen|retired",
+        "",
+        "  render  [--id <card-id>] [--mood]        rebuild html (all cards by default)",
+        "",
+        "  mood    add [--json '<json>'] [--no-download]",
+        "          list [--status --tag --applies-to]",
+        "          board                          render site/mood.html",
+        "          adopt <id> | reject <id>",
+        "",
+        "  --format json                          machine-readable output",
+        "  SOCRATES_HOME                          data root (default ~/.socrates)",
       ].join("\n"),
       false,
     );
@@ -336,6 +426,74 @@ async function main() {
         fail(`unknown moments command: ${command ?? "(none)"}`);
     }
     return;
+  if (group === "render") {
+    const home = resolveHome();
+    ensureDirs(home);
+    try {
+      if (flags.mood) out({ wrote: renderMoodBoardTo(home) }, asJson);
+      else out(flags.id ? { wrote: renderOne(flags.id, home) } : renderAll(home), asJson);
+    } catch (error) {
+      fail(error.message);
+    }
+    return;
+  }
+
+  if (group === "mood") {
+    switch (command) {
+      case "add":
+        out(await moodAdd(flags), asJson);
+        return;
+      case "list":
+        out(
+          listMoods(resolveHome(), {
+            status: flags.status,
+            tag: flags.tag,
+            appliesTo: flags["applies-to"],
+          }),
+          asJson,
+        );
+        return;
+      case "board":
+        out(moodBoard(flags), asJson);
+        return;
+      case "adopt":
+      case "reject": {
+        const home = resolveHome();
+        try {
+          const status = command === "adopt" ? "adopted" : "rejected";
+          const mood = setMoodStatus(positional[0] ?? flags.id, status, home);
+          renderMoodBoardTo(home);
+          out(mood, asJson);
+        } catch (error) {
+          fail(error.message);
+        }
+        return;
+      }
+      default:
+        fail(`unknown mood command: ${command ?? "(none)"}`);
+    }
+  }
+
+  if (group === "card") {
+    switch (command) {
+      case "add":
+        out(await cardAdd(flags), asJson);
+        return;
+      case "list":
+        out(cardList(flags), asJson);
+        return;
+      case "review": {
+        const home = resolveHome();
+        try {
+          out(reviewCard(positional[0] ?? flags.id, positional[1] ?? flags.status, home), asJson);
+        } catch (error) {
+          fail(error.message);
+        }
+        return;
+      }
+      default:
+        fail(`unknown card command: ${command ?? "(none)"}`);
+    }
   }
 
   if (group !== "taste") fail(`unknown command group: ${group}`);
