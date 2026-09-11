@@ -426,6 +426,8 @@ async function main() {
         fail(`unknown moments command: ${command ?? "(none)"}`);
     }
     return;
+  }
+
   if (group === "render") {
     const home = resolveHome();
     ensureDirs(home);
