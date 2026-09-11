@@ -188,6 +188,20 @@ resolves to the half-finished conversation you are in. After it ends — or on a
 unattended extraction is not only about not blocking you; it is what makes the default
 session selector correct.
 
+**Trust is the other catch, and it fails silently.** Project-local resources — including this
+plugin's skills — load only when the project is trusted, and `-p` never shows a trust prompt.
+With the default `defaultProjectTrust: "ask"`, a non-interactive run *ignores* them. On a
+machine with no saved `~/.pi/agent/trust.json` entry, the run does not error: it simply has no
+`extract-moments` to use, and you get a strange model answer instead. `socrates-nightly`
+passes `--approve` so it does not depend on ambient state. Check what a run can see with:
+
+```bash
+printf '%s\n' '{"type":"get_commands","id":1}' | pi --mode rpc --approve \
+  | grep -o 'skill:[a-z-]*'
+```
+
+Without `--approve` that reports only your user-level skills; with it, the plugin's appear.
+
 **Auth is the catch.** A headless run needs credentials that work non-interactively. An
 OAuth provider whose refresh token has expired fails at 3am with nobody watching; a static
 API key does not. Use `pi --provider <p> --model <m>` to override the model for one run

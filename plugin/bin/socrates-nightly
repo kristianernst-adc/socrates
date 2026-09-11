@@ -181,7 +181,13 @@ run_model() {
     return 0
   fi
   log "start  $label"
-  set -- -p --no-session --tools bash,read
+  # --approve: project-local resources load only when the project is trusted, and
+  # `-p` never shows a trust prompt — with the default `defaultProjectTrust: ask`
+  # those resources are ignored. On a machine with no saved trust.json that means
+  # zero skills, so the run does not fail, it just silently has no extract-moments
+  # to use. Verifying: `pi --mode rpc` + get_commands reports 0 project skills
+  # without this flag and 4 with it.
+  set -- -p --no-session --approve --tools bash,read
   if [ -n "$PROVIDER" ]; then set -- "$@" --provider "$PROVIDER"; fi
   if [ -n "$MODEL" ]; then set -- "$@" --model "$MODEL"; fi
   set -- "$@" "$prompt"
