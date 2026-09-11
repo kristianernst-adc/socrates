@@ -19,7 +19,7 @@ import { extname, join } from "node:path";
 import { appendJsonl, makeId, paths, readLatestById } from "./store.mjs";
 
 export const MOOD_STATUSES = ["candidate", "adopted", "rejected"];
-export const MOOD_APPLIES_TO = ["card", "index", "board", "typography", "color"];
+export const MOOD_APPLIES_TO = ["page", "index", "board", "typography", "color"];
 
 const optionalString = (value) =>
   typeof value === "string" && value.trim() ? value.trim() : undefined;
