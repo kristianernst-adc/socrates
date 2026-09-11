@@ -12,12 +12,15 @@ import {
   appendJsonl,
   ensureDirs,
   paths,
+  readJsonl,
   readLatestById,
   resolveHome,
   writeAtomic,
 } from "../lib/store.mjs";
 import { normalizeMoment } from "../lib/model.mjs";
 import { compile, recordFeedback } from "../lib/taste.mjs";
+import { capture, piSessionsDir } from "../lib/capture.mjs";
+import { listSessions, pickSession, renderDigest } from "../lib/digest.mjs";
 
 function parseArgs(argv) {
   const flags = {};
@@ -60,6 +63,21 @@ function out(value, asJson) {
 function fail(message) {
   process.stderr.write(`socrates: ${message}\n`);
   process.exit(1);
+}
+
+/**
+ * An empty list is indistinguishable from reading the wrong store, so name the
+ * store. Goes to stderr so `--format json` output stays pipeable.
+ *
+ * This exists because an exported SOCRATES_HOME silently wins over ~/.socrates,
+ * and `[]` from a scratch directory looks exactly like "nothing recorded yet".
+ */
+function noteEmpty(what, file) {
+  process.stderr.write(`socrates: 0 ${what} in ${file}\n`);
+  const override = process.env.SOCRATES_HOME?.trim();
+  if (override) {
+    process.stderr.write(`socrates: SOCRATES_HOME=${override} overrides the default root\n`);
+  }
 }
 
 async function tasteAdd(flags) {
@@ -162,8 +180,7 @@ function momentsList(flags) {
 }
 
 /** Append-only correction: same id, new status, latest record wins. */
-function momentsDismiss(id) {
-  if (!id) fail("moments dismiss needs a moment id");
+function momentsDismiss(id) {  if (!id) fail("moments dismiss needs a moment id");
   const home = resolveHome();
   const moment = readLatestById(paths(home).moments).find((m) => m.id === id);
   if (!moment) fail(`no moment with id ${id}`);
@@ -172,9 +189,71 @@ function momentsDismiss(id) {
   return dismissed;
 }
 
+function captureEvents(flags, asJson) {
+  const home = resolveHome();
+  ensureDirs(home);
+  const dir = typeof flags.dir === "string" ? flags.dir : piSessionsDir();
+
+  const result = capture({
+    dir,
+    eventsFile: paths(home).events,
+    dryRun: flags["dry-run"] === true,
+  });
+
+  if (asJson) {
+    out(result, true);
+    return result;
+  }
+
+  const verb = flags["dry-run"] === true ? "would capture" : "captured";
+  const lines = [
+    `${verb} ${result.events} events from ${result.sessions} sessions`,
+    `  from ${result.dir}`,
+    `  to   ${result.eventsFile}`,
+  ];
+  for (const file of result.files) {
+    const name = file.file.slice(result.dir.length + 1);
+    lines.push(`    ${String(file.events).padStart(5)}  ${name}`);
+  }
+  if (!result.sessions) lines.push("    (no sessions found — is this the right --dir?)");
+  out(lines.join("\n"), false);
+  return result;
+}
+
+function extract(flags) {
+  const home = resolveHome();
+  const events = readJsonl(paths(home).events);
+  if (!events.length) fail("no events yet — run `socrates capture` first");
+
+  if (flags.list === true) {
+    return listSessions(events).map(({ events: _events, ...rest }) => rest);
+  }
+
+  const selector = typeof flags.session === "string" ? flags.session : "latest";
+  const picked = pickSession(events, selector);
+  if (!picked) fail(`no session matching \`${selector}\` — try --list`);
+
+  // A session with no conversation at all is not worth a model call. Say so
+  // rather than emitting a digest with nothing in it.
+  if (!picked.hasConversation) {
+    return {
+      session: picked.session,
+      skipped: "no conversation — no assistant messages or tool calls",
+      digest: null,
+    };
+  }
+
+  return { ...picked, digest: renderDigest(picked.events) };
+}
+
 async function main() {
-  const [group, command, ...rest] = process.argv.slice(2);
-  const { flags, positional } = parseArgs(rest);
+  // Groups are either `<group> <command>` (taste add) or flat `<group> --flags`
+  // (capture). The second token is only a command if it is not a flag.
+  const [group, ...tail] = process.argv.slice(2);
+  const hasCommand = Boolean(tail[0]) && !tail[0].startsWith("--");
+  const command = hasCommand ? tail[0] : null;
+  const { flags, positional } = parseArgs(hasCommand ? tail.slice(1) : tail);
+  const home = resolveHome();
   // NOTE: for `taste add`, --json is the *input* payload. Output format is
   // controlled separately so the two never get tangled.
   const asJson = flags.format === "json" || process.env.SOCRATES_FORMAT === "json";
@@ -185,6 +264,9 @@ async function main() {
         "socrates — learn from the work you already did",
         "",
         "  socrates home                        print the resolved data root",
+        "",
+        "  socrates capture [--dir PATH] [--dry-run]  rebuild events.jsonl from Pi sessions",
+        "  socrates extract [--session ID] [--list]  print a session as a digest",
         "",
         "  socrates taste add [--json '<json>']     record preference feedback (or stdin)",
         "  socrates taste list [--status --level --tag]",
@@ -208,14 +290,45 @@ async function main() {
     return;
   }
 
+  if (group === "capture") {
+    captureEvents(flags, asJson);
+    return;
+  }
+
+  if (group === "extract") {
+    const result = extract(flags);
+    if (asJson) out(result, true);
+    else if (Array.isArray(result)) {
+      out(
+        result
+          .map((s) =>
+            [
+              s.session.slice(0, 8),
+              String(s.eventCount).padStart(4),
+              s.hasConversation ? "     " : "none ",
+              (s.endedAt ?? "").slice(0, 16),
+              s.cwd,
+            ].join("  "),
+          )
+          .join("\n"),
+        false,
+      );
+    } else if (result.digest) out(result.digest, false);
+    else out(`skipped ${result.session.slice(0, 8)}: ${result.skipped}`, false);
+    return;
+  }
+
   if (group === "moments") {
     switch (command) {
       case "add":
         out(await momentsAdd(flags), asJson);
         break;
-      case "list":
-        out(momentsList(flags), asJson);
+      case "list": {
+        const moments = momentsList(flags);
+        if (!moments.length) noteEmpty("moments", paths(home).moments);
+        out(moments, asJson);
         break;
+      }
       case "dismiss":
         out(momentsDismiss(positional[0] ?? flags.id), asJson);
         break;
@@ -232,7 +345,11 @@ async function main() {
       out(await tasteAdd(flags), asJson);
       break;
     case "list":
-      out(tasteList(flags), asJson);
+      {
+        const statements = tasteList(flags);
+        if (!statements.length) noteEmpty("statements", paths(home).statements);
+        out(statements, asJson);
+      }
       break;
     case "compile":
       out(tasteCompile(), asJson);

@@ -4,7 +4,7 @@
 //
 // No test framework, no package.json. Same constraint as the plugin itself.
 
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -14,7 +14,7 @@ import { fileURLToPath } from "node:url";
 
 import {
   appendJsonl,
-  eventShardPath,
+  paths,
   readJsonl,
   readLatestById,
   resolveHome,
@@ -77,11 +77,11 @@ test("home resolution: config.home beats PLUGIN_DATA beats the config dir", () =
   });
 });
 
-test("events are sharded by month", () => {
-  assert.equal(
-    eventShardPath("/home/me/.socrates", "2026-09-11T09:21:41.208Z"),
-    "/home/me/.socrates/events/2026-09.jsonl",
-  );
+test("the store is two root files plus taste", () => {
+  const p = paths("/home/.socrates");
+  assert.equal(p.events, "/home/.socrates/events.jsonl");
+  assert.equal(p.moments, "/home/.socrates/moments.jsonl");
+  assert.equal(p.compiled, "/home/.socrates/taste/TASTE.md");
 });
 
 test("readJsonl tolerates a torn final line", () => {
@@ -226,6 +226,37 @@ test("moments add rejects a malformed payload instead of storing it", () => {
     () => run(home, ["moments", "add"], JSON.stringify({ kind: "mistake_made", title: "no summary" })),
     /socrates: moment requires summary/,
   );
+});
+
+test("an empty list names the store it read, so silence is never ambiguous", () => {
+  const home = mkdtempSync(join(tmpdir(), "socrates-"));
+  const { stdout, stderr } = spawnSync(process.execPath, [CLI, "moments", "list"], {
+    env: { ...process.env, SOCRATES_HOME: home, PLUGIN_DATA: "" },
+    encoding: "utf8",
+  });
+
+  // stdout stays machine-readable; the explanation goes to stderr.
+  assert.equal(stdout.trim(), "[]");
+  assert.match(stderr, /0 moments in .*moments\.jsonl/);
+  assert.match(stderr, /SOCRATES_HOME=.* overrides the default root/);
+});
+
+test("a non-empty list stays quiet", () => {
+  const home = mkdtempSync(join(tmpdir(), "socrates-"));
+  const env = { ...process.env, SOCRATES_HOME: home, PLUGIN_DATA: "" };
+  execFileSync(process.execPath, [CLI, "moments", "add"], {
+    env,
+    encoding: "utf8",
+    input: JSON.stringify({
+      kind: "mistake_made",
+      title: "t",
+      summary: "s",
+      evidence: [{ events: ["ev_1_1_0"] }],
+    }),
+  });
+
+  const { stderr } = spawnSync(process.execPath, [CLI, "moments", "list"], { env, encoding: "utf8" });
+  assert.equal(stderr, "");
 });
 
 test("existing taste commands still work", () => {

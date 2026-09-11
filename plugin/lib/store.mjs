@@ -56,24 +56,13 @@ export function paths(home = resolveHome()) {
     statements: join(home, "taste", "statements.jsonl"),
     compiled: join(home, "taste", "TASTE.md"),
     // capture
-    eventsDir: join(home, "events"),
+    events: join(home, "events.jsonl"),
     moments: join(home, "moments.jsonl"),
-    packetsDir: join(home, "packets"),
-    stateDir: join(home, "state"),
-    blobsDir: join(home, "blobs"),
   };
 }
 
-/** Events are sharded by month so no single file grows without bound. */
-export function eventShardPath(home, iso) {
-  return join(paths(home).eventsDir, `${String(iso).slice(0, 7)}.jsonl`);
-}
-
 export function ensureDirs(home) {
-  const p = paths(home);
-  for (const dir of [p.tasteDir, p.eventsDir, p.packetsDir, p.stateDir, p.blobsDir]) {
-    mkdirSync(dir, { recursive: true });
-  }
+  mkdirSync(home, { recursive: true });
 }
 
 export function appendJsonl(file, record) {
