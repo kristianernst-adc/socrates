@@ -163,12 +163,57 @@ there is work for it — `extract --pending` (a session with content and no mome
 it already read, which would append a second copy of every moment, and never pays for a no-op
 run.
 
+### Scheduling it
+
+On macOS use `launchd`, not cron. Put this at
+`~/Library/LaunchAgents/com.socrates.nightly.plist`:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.socrates.nightly</string>
+  <key>ProgramArguments</key>
+  <array><string>/Users/you/src/socrates/plugin/bin/socrates-nightly</string></array>
+  <key>StartCalendarInterval</key>
+  <dict><key>Hour</key><integer>3</integer><key>Minute</key><integer>30</integer></dict>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key><string>/opt/homebrew/bin:/usr/bin:/bin</string>
+    <key>SOCRATES_PROJECT_DIR</key><string>/Users/you/src/socrates</string>
+  </dict>
+  <key>StandardOutPath</key><string>/tmp/socrates-nightly.out</string>
+  <key>StandardErrorPath</key><string>/tmp/socrates-nightly.err</string>
+</dict>
+</plist>
+```
+
+```bash
+launchctl load -w ~/Library/LaunchAgents/com.socrates.nightly.plist
+launchctl kickstart -p gui/$(id -u)/com.socrates.nightly   # fire it now, to prove it works
+launchctl unload -w ~/Library/LaunchAgents/com.socrates.nightly.plist   # off again
+```
+
+The run's own log is `<data root>/nightly.log` either way; the plist paths only catch what
+happens before the script starts. `kickstart` matters because a 3am job is otherwise only
+observable the morning after — do not schedule something you have never seen run.
+
+Both `EnvironmentVariables` entries are load-bearing, and both are easy to miss. launchd
+starts the job with roughly `PATH=/usr/bin:/bin`, where Homebrew's `node` does not exist, so
+without the first the script exits 127 having done nothing. Without the second it runs from
+`$HOME`, where a locally-registered plugin is not visible — see below. Adjust both paths.
+
+cron works too, but on macOS it is deprecated and needs **Full Disk Access** granted to
+`/usr/sbin/cron` in System Settings → Privacy & Security. Without it cron cannot read `~/.pi`
+or `~/.socrates`, and the job appears to run while silently doing nothing:
+
 ```cron
 30 3 * * *  $HOME/src/socrates/plugin/bin/socrates-nightly
 ```
 
-Two things cron will not give you. Its `PATH` is minimal, so if `node` or `pi` live outside
-`/usr/bin:/bin` say so:
+Two environment gaps apply to either scheduler, and the plist above closes both. A scheduled
+process gets a minimal `PATH`, so if `node` or `pi` live outside `/usr/bin:/bin`, say so:
 
 ```cron
 PATH=/opt/homebrew/bin:/usr/bin:/bin
@@ -176,11 +221,16 @@ PATH=/opt/homebrew/bin:/usr/bin:/bin
 ```
 
 And the plugin has to be discoverable. If you registered it locally (`pi install -l ./plugin`)
-rather than globally, cron starts in the wrong directory — point the script at the project:
+rather than globally, the job starts in the wrong directory — point the script at the project,
+which both registers the skills and gives the run the right `cwd`:
 
 ```cron
 30 3 * * *  SOCRATES_PROJECT_DIR=$HOME/src/socrates $HOME/src/socrates/plugin/bin/socrates-nightly
 ```
+
+A full run costs two model calls, and only on nights with new work — both steps are skipped
+when nothing is pending. For a free nightly run that just keeps the store and the html fresh,
+use `--no-model` in place of the bare script above.
 
 **Why `latest` is right here and wrong in a session.** Inside a session, `--session latest`
 resolves to the half-finished conversation you are in. After it ends — or on a schedule —
