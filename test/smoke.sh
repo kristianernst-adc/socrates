@@ -118,6 +118,30 @@ assert 'tool_call' in kinds, kinds
 assert 'tool_result' in kinds, kinds
 PY"
 
+# Event ids are the evidence currency: moments cite them. Collisions or
+# instability would make evidence meaningless, and both have happened here.
+check "event ids are unique and stable" "python3 - <<'PY'
+import collections, glob, json, subprocess, hashlib, os
+src = '$TMP/ids.jsonl'
+open(src, 'w').write('\n'.join([
+  json.dumps({'type':'session','version':3,'id':'sess_ids','timestamp':'2026-01-01T00:00:00.000Z','cwd':'/tmp'}),
+  json.dumps({'type':'message','id':'m1','timestamp':'2026-01-01T00:00:01.000Z','message':{'role':'user','content':[{'type':'text','text':'first'}],'timestamp':1}}),
+  json.dumps({'type':'message','id':'m2','timestamp':'2026-01-01T00:00:02.000Z','message':{'role':'user','content':[{'type':'text','text':'second'}],'timestamp':2}}),
+  json.dumps({'type':'message','id':'m3','timestamp':'2026-01-01T00:00:03.000Z','message':{'role':'assistant','content':[{'type':'text','text':'third'},{'type':'thinking','thinking':'thought'}],'timestamp':3}}),
+]) + '\n')
+
+def run():
+    subprocess.run(['$SOCRATES','capture','--file',src,'--adapter','pi','--force'],
+                   capture_output=True, check=True, env={**os.environ, 'SOCRATES_HOME': os.environ['SOCRATES_HOME']})
+    f = glob.glob(os.environ['SOCRATES_HOME'] + '/events/pi/sess_ids.jsonl')[0]
+    return [json.loads(l)['id'] for l in open(f)]
+
+first = run()
+assert len(first) == len(set(first)), f'duplicate ids: {collections.Counter(first).most_common(3)}'
+assert first == run(), 'ids changed between identical captures'
+assert len(first) >= 4, first
+PY"
+
 check "extract --list shows all three" "python3 - <<'PY'
 import glob, os
 a = {os.path.basename(os.path.dirname(f)) for f in glob.glob('$SOCRATES_HOME/events/*/*.jsonl')}

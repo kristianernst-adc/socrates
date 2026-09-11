@@ -120,7 +120,10 @@ function makePush(state, adapter) {
 function pushMessageBlocks(push, message, row, isAssistant) {
   const actor = isAssistant ? "assistant" : "user";
   blocksOf(message.content).forEach((block, blockIndex) => {
-    const base = { line: row.line, entryId: row.id, blockIndex };
+    // The line number is a last-resort identity: it is unique and stable within a
+    // file, so a transcript with no usable entry id still produces distinct event
+    // ids. Collapsing them silently would make evidence meaningless.
+    const base = { line: row.line, entryId: row.entryId ?? `line${row.line}`, blockIndex };
     if (block?.type === "text") {
       push(isAssistant ? "assistant_message" : "user_message", {
         ...base,
