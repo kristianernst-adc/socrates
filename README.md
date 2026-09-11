@@ -124,6 +124,58 @@ plugin/bin/socrates moments list
 
 Note the glob: `node --test plugin/test/` (a bare directory) fails on Node 25.
 
+## Running extraction unattended
+
+The first two steps need no model at all, so a scheduler can keep the store fresh for free:
+
+```bash
+socrates capture
+socrates extract --list
+```
+
+The judgement step does need a model, and headless print mode is the way in:
+
+```bash
+pi -p --no-session --tools bash \
+  "Use the extract-moments skill on the most recent session"
+```
+
+| Flag | Why |
+|---|---|
+| `-p` | print the response and exit — no TUI |
+| `--no-session` | keeps this run out of your session list |
+| `--tools bash` | gives it the CLI and nothing else |
+
+A nightly job, as a script because cron's `PATH` is minimal and will not find `socrates`:
+
+```bash
+#!/bin/sh
+# ~/.socrates/nightly.sh
+set -e
+export PATH="$HOME/.local/bin:/opt/homebrew/bin:$PATH"
+socrates capture
+pi -p --no-session --tools bash "Use the extract-moments skill on the most recent session"
+```
+
+```cron
+30 3 * * *  $HOME/.socrates/nightly.sh >> $HOME/.socrates/cron.log 2>&1
+```
+
+**Why `latest` is right here and wrong in a session.** Inside a session, `--session latest`
+resolves to the half-finished conversation you are in. After it ends — or on a schedule —
+`latest` resolves to a *completed* session, which is exactly what you want to extract. So
+unattended extraction is not only about not blocking you; it is what makes the default
+session selector correct.
+
+**Auth is the catch.** A headless run needs credentials that work non-interactively. An
+OAuth provider whose refresh token has expired fails at 3am with nobody watching; a static
+API key does not. Use `pi --provider <p> --model <m>` to override the model for one run
+without changing your interactive default.
+
+**Watch the model.** This runs on whatever `defaultProvider`/`defaultModel` are set to, at
+3am, with no one reading the output. A model that is fine for extraction and cheap is a
+better default here than the most capable one. Check `~/.pi/agent/settings.json`.
+
 ## The store
 
 ```
