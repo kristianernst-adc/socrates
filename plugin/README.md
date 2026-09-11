@@ -16,25 +16,25 @@ plugin/
   skills/              fixed discovery location
     capture-sessions/  read harness transcripts into a normalised event log
     update-taste/      personalization: turn a reaction into a durable preference
-    generate-learning/ turn real work into a learning card + html
-      references/card-model.md      record fields and block types
-      references/design-system.md   token contract, layouts, mood workflow
+    extract-moments/   turn events into moments, each citing the events it came from
+    generate-learning/ write a page, grounded in a session
+      references/design-system.md   interactivity rules, mood workflow
     benji-taste/       the visual reference (vendored, see note below)
   bin/
     socrates           CLI — the automation surface
     socrates-mcp       stdio MCP server — the portable tool surface
   lib/
-<<<<<<< HEAD
-    store.mjs          data root resolution + JSONL + the append-only fold
-    taste.mjs          the taste model
-=======
-    store.mjs          data root resolution + JSONL
-    capture.mjs        transcript adapters + normalised events
+    store.mjs          data root resolution, JSONL, ids
+    model.mjs          the event and moment models (the validation boundary)
+    capture.mjs        three transcript adapters + incremental loading
+    digest.mjs         a readable, event-id-citing digest of a session
+    page.mjs           a page is a title plus html
+    render.mjs         the board. no component library
     taste.mjs          preferences
->>>>>>> simple-capture
-    card.mjs           learning cards
     mood.mjs           web visual references
-    render.mjs         deterministic html (cards, index, mood board)
+    page.mjs           learning pages
+    mood.mjs           web visual references
+    render.mjs         deterministic html (pages, index, mood board)
     model.mjs          the capture model (events, moments)
     pi.mjs             Pi transcript adapter — the only file that knows Pi exists
     capture.mjs        transcript discovery + the events.jsonl rebuild
@@ -43,7 +43,7 @@ plugin/
     capture.test.mjs   store + model + CLI
     pi.test.mjs        adapter + capture rebuild
     digest.test.mjs    digest rendering + extract
-                       run: node --test plugin/test/*.test.mjs
+                       run: ./test/smoke.sh
   com.socrates/        reverse-domain namespace for per-harness extras
 ```
 
@@ -111,17 +111,6 @@ plugin/bin/socrates home
 No build step and no dependencies — plain Node ESM, so the skill works in a
 fresh checkout.
 
-<<<<<<< HEAD
-For the full development setup — data root, PATH, registering the plugin with Pi
-— see [../README.md](../README.md). The short version:
-
-```bash
-ln -s "$PWD/plugin/bin/socrates" ~/.local/bin/socrates   # the skill calls bare `socrates`
-pi install -l ./plugin                                  # register with Pi
-node --test plugin/test/*.test.mjs                      # tests
-```
-
-=======
 ## Output
 
 Everything a person looks at lives at the top level of the data root, so pointing
@@ -130,20 +119,18 @@ at the folder is enough:
 ```
 <home>/
   index.html     the board — every page as a small paper on a surface
-  pages/         one hand-written html file per item
+  pages/         one hand-written html file per page
   mood.html      the visual reference board
-  cards/         the data (cards.jsonl)
+  pages.jsonl    the page records
   taste/         preferences + TASTE.md
   mood/          mood items + downloaded assets
   events/        captured sessions
   state/         ingest cursors
 ```
 
-Pages are **whatever HTML the model writes**. `card add` takes an `html` field and
+Pages are **whatever HTML the model writes**. `page add` takes an `html` field and
 writes it out untouched; a fragment gets wrapped in a plain reading shell. There
-is no required structure. The older block vocabulary (`explanation`, `contrast`,
-`diagram`, `drill`, …) still works for when composing beats hand-rolling, but it
-is an option, not the format.
+is no required structure. There is no block vocabulary and no template.
 
 The board gives each paper a stable tilt derived from its id, so nothing moves
 around between renders. Hover lifts and wiggles it; click opens the page.
@@ -151,7 +138,6 @@ around between renders. Hover lifts and wiggles it; click opens the page.
 
 ## Developing
 
->>>>>>> simple-capture
 ```bash
 # capture sessions (deterministic, no model involved)
 plugin/bin/socrates capture --current   # this session
@@ -166,8 +152,8 @@ echo '{"polarity":"avoid","about":"code comments","statement":"Avoid restating w
 plugin/bin/socrates taste compile
 cat ~/.socrates/taste/TASTE.md
 
-# author and render a learning card (normally done via the skill)
-plugin/bin/socrates card add --json "$(cat card.json)"
+# author and render a learning page (normally done via the skill)
+plugin/bin/socrates page add --json "$(cat page.json)"
 plugin/bin/socrates render
 open "$(plugin/bin/socrates home | python3 -c 'import json,sys;print(json.load(sys.stdin)["home"])')/site/index.html"
 
@@ -270,7 +256,7 @@ Done:
 `bin/` implement enough to prove the model end to end, not the engine.
 
 Working today: session capture for three harnesses, preferences
-(record → fold → compile), learning cards (author → render → review), the
+(record → fold → compile), learning pages (author → render → review), the
 deterministic HTML renderer with four layouts, and the mood board with image
 download.
 
@@ -279,14 +265,12 @@ Not done yet:
 <<<<<<< HEAD
 - dogfooding the loop on our own work (stage 4)
 - per-harness hooks under `com.socrates/`
-=======
 - per-harness hooks under `com.socrates/` — capture is pull-based only
 - no compaction of `events/`: retired sources are never pruned from disk
->>>>>>> simple-capture
 - wiring `TASTE.md` into a system prompt
-- the scheduled jobs that keep cards and taste fresh without being asked
-- MCP tools for cards, moods and capture (only taste is exposed so far)
-- no eval set for card quality, so nothing guards against drift
+- the scheduled jobs that keep pages and taste fresh without being asked
+- MCP tools for pages, moods and capture (only taste is exposed so far)
+- no eval set for page quality, so nothing guards against drift
 - typography has not been chosen deliberately; it is the highest-leverage thing
   on the mood board
 - `events/` is one file per *source session file*, not month-sharded as design.md sketched

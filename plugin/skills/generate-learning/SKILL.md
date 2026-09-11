@@ -1,24 +1,24 @@
 ---
 name: generate-learning
-description: Turn something that happened during a real coding session into a short, grounded learning card and render it as an HTML file. Use when the user asks to learn from what they just did, to explain something they used without understanding, to turn a session or diff into a lesson, or when evidence suggests a gap worth closing. Keywords - learning, learn, teach me, explain what we did, learning card, study, revision, drill, gap, "I don't understand", "why did that work".
+description: Turn something that happened during a real coding session into a short, grounded learning page and render it as an HTML file. Use when the user asks to learn from what they just did, to explain something they used without understanding, to turn a session or diff into a lesson, or when evidence suggests a gap worth closing. Keywords - learning, learn, teach me, explain what we did, learning page, study, revision, drill, gap, "I don't understand", "why did that work".
 license: MIT
 metadata:
   version: "0.1.0"
   component: generation
 ---
 
-# Generate a learning card
+# Generate a learning page
 
 The job: take something that actually happened in the work, and turn it into the
 shortest artifact that would make the reader genuinely understand it.
 
-Not a tutorial. Not documentation. A card, grounded in the reader's own code,
+Not a tutorial. Not documentation. A page, grounded in the reader's own code,
 that takes about five minutes.
 
 ## The bar
 
-**Most sessions should produce zero cards.** That is the expected outcome, not a
-failure. A feed where everything becomes a card is a feed nobody reads, and a
+**Most sessions should produce zero pages.** That is the expected outcome, not a
+failure. A feed where everything becomes a page is a feed nobody reads, and a
 learning tool that produces homework is worse than no learning tool.
 
 Signals that something *might* be a gap:
@@ -37,7 +37,7 @@ But a signal is not a qualification. A candidate must pass **all five** tests:
    lookup. Names of flags, environment variables, versions and APIs fail here,
    and they fail hard.
 3. **Recurrence.** Would you plausibly get this wrong *again*? If you would never
-   make the mistake now, you have already learned it and a card adds nothing.
+   make the mistake now, you have already learned it and a page adds nothing.
 4. **Decision.** Does it change a decision you make, or is it trivia? Prefer
    things that change how you would design something.
 5. **Model.** Can you state the underlying principle in one sentence that is not
@@ -56,13 +56,13 @@ Where the rejects go:
 | it is specific to this one piece of work | nowhere — it is already in the code |
 | they have already learned it | nowhere — that would be revision they don't need |
 
-Saying "nothing here is worth a card" is a good outcome. Say it plainly and
+Saying "nothing here is worth a page" is a good outcome. Say it plainly and
 move on.
 
 ## Titles
 
 The index is a reference someone scans in six months, not a feed they scroll.
-A title has to let them decide whether to open the card, and let them find it
+A title has to let them decide whether to open the page, and let them find it
 again by searching for the concept.
 
 - **Name the concept, not the incident.** What happened goes in the page; the
@@ -84,7 +84,7 @@ again by searching for the concept.
 ## Steps
 
 1. **Find the moment.** What specifically is not understood? One thing. If you
-   find two unrelated things, make two cards.
+   find two unrelated things, make two pages.
 
 2. **Read the taste file first** and follow it. Layout, tone and length are
    things the user has opinions about:
@@ -110,10 +110,11 @@ again by searching for the concept.
    say that you changed it.
 
 5. **Write the page.** Hand-write HTML. It is your page: choose the structure,
-   the layout, the styling, the length. Nothing is prescribed.
+   the layout, the styling, the length. Nothing is prescribed — there is no
+   component library to conform to, and nothing the renderer will add.
 
    ```bash
-   socrates card add --json-file page.json
+   socrates page add --json-file page.json
    ```
 
    `page.json` needs `title` (used on the board) and `html`. Everything else is
@@ -138,87 +139,11 @@ again by searching for the concept.
 
 6. **Report one line.** Where it landed. Nothing else.
 
-## A worked example
-
-Hand-written HTML is the default, and the more interesting one to write. But if
-you would rather compose than hand-roll a page, the structured block vocabulary
-is still there. Same evidence either way: the user ran `git rebase --onto` from a
-colleague's suggestion, watched it succeed, and asked "why did that work".
-
-```json
-{
-  "title": "Rebasing a commit range onto a new base",
-  "subtitle": "What `git rebase --onto` does that a plain rebase cannot.",
-  "topic": "git",
-  "difficulty": "working",
-  "layout": "before-after",
-  "estimatedMinutes": 4,
-  "tags": ["git", "rebase"],
-  "summary": "Rebasing a range of commits onto a new base without dragging the old one along.",
-  "provenance": {
-    "repo": "toolbox/socrates",
-    "files": ["plugin/lib/store.mjs"]
-  },
-  "signals": {
-    "why": "user asked why the rebase worked",
-    "confidence": 0.7
-  },
-  "blocks": [
-    {
-      "type": "explanation",
-      "text": "`git rebase <upstream>` replays your commits onto upstream's tip. It assumes everything before your commits on the current branch *is* upstream. When that assumption is wrong — when you branched off something you no longer want — you need to say explicitly where the commits start and where they go. That is the three-argument form."
-    },
-    {
-      "type": "contrast",
-      "title": "Same six commits, different destination",
-      "wrong": {
-        "label": "What you tried first",
-        "code": "git rebase main",
-        "note": "Replays everything between main and HEAD, including the commits from the abandoned branch."
-      },
-      "right": {
-        "label": "What worked",
-        "code": "git rebase --onto main old-base",
-        "note": "`old-base` is exclusive: only the commits *after* it are replayed."
-      }
-    },
-    {
-      "type": "diagram",
-      "kind": "flow",
-      "title": "Reading the three arguments",
-      "nodes": [
-        { "label": "main", "detail": "where the commits land" },
-        { "label": "old-base", "detail": "exclusive lower bound" },
-        { "label": "HEAD", "detail": "inclusive upper bound" }
-      ]
-    },
-    {
-      "type": "drill",
-      "prompt": "You have 3 commits on top of `feature-a` and want only those on `main`. What do you type?",
-      "hint": "Two refs and a flag, then the branch.",
-      "answer": "`git rebase --onto main feature-a`. `feature-a` is exclusive, so its own commits are left behind."
-    },
-    {
-      "type": "callout",
-      "variant": "gotcha",
-      "title": "Exclusive, not inclusive",
-      "text": "The second ref is *not* replayed. Off-by-one here silently moves one commit too many."
-    }
-  ]
-}
-```
-
-Every field and block type is in `references/card-model.md`.
-
-Note the shape: it opens with an explanation, lands the contrast, then makes the
-same idea stick three more ways. Seven blocks is the upper end — four is more
-typical. If you wrote this by hand instead, you would probably keep the contrast
-and the drill and drop the rest.
 
 ## Guardrails
 
-- **Ground it.** Every card needs real provenance — repo, file, session, or the
-  quote that triggered it. A card that cannot point at the work is a blog post.
+- **Ground it.** Every page needs real provenance — repo, file, session, or the
+  quote that triggered it. A page that cannot point at the work is a blog post.
 - **Never invent code.** Copy it. If the real code is too long, cut it and say
   what you cut.
 - **Never invent an API or a flag.** If you are not certain it exists, leave it
@@ -230,4 +155,4 @@ and the drill and drop the rest.
 - **Do not redact reality into falseness.** Do not paste secrets. Do redact
   credentials — replace with `REDACTED` rather than dropping the surrounding
   code.
-- **Do not spam.** If the user asked for one card, make one.
+- **Do not spam.** If the user asked for one page, make one.

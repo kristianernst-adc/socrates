@@ -21,64 +21,26 @@ literally. Read it, then apply the translation below.
 
 Our output is a self-contained HTML file with no JavaScript. Roughly a third of
 the reference does not survive that, and pretending otherwise produces worse
-cards. The honest mapping:
+pages. The honest mapping:
 
-| Reference idea | In a static card |
+| Reference idea | In a static page |
 | --- | --- |
 | Progressive disclosure | `<details>` for drills and answers. Depth is opt-in, never a wall of text. |
-| Context continuity | Provenance in the footer, always. The reader can see which file, repo and session a card came from. |
+| Context continuity | Provenance in the footer, always. The reader can see which file, repo and session a page came from. |
 | Semantic motion | Becomes **semantic layout**. Structure is expressed by arrangement — numbered steps for sequence, arrows for flow, stacked bars for layers. Nothing moves, so arrangement carries the whole load. |
-| Selective emphasis | The delight budget. Most cards are quiet. One card in ten earns a richer diagram. Do not decorate every card equally. |
+| Selective emphasis | The delight budget. Most pages are quiet. One page in ten earns a richer diagram. Do not decorate every page equally. |
 | Tactility, sound, haptics | **Out of scope.** Static document. No sound, no fake interactivity. |
-| State completeness | Applies to the *index*, not the card: empty, one-card, many-card, retired-only. |
+| State completeness | Applies to the *index*, not the page: empty, one-page, many-page, retired-only. |
 | Constraints over variants | The token contract and the four named layouts. Resist a fifth. |
 | Performance and trust | Self-contained, no external font or image fetch, opens instantly, prints correctly. |
-| Judge the running product | Open the rendered HTML and look at it. Never declare a card done from the JSON. |
-| Craft subordinate to product truth | A beautiful card about nothing is noise. The *gap* has to be real. |
+| Judge the running product | Open the rendered HTML and look at it. Never declare a page done from the JSON. |
+| Craft subordinate to product truth | A beautiful page about nothing is noise. The *gap* has to be real. |
 
 The hard gates from the reference still apply, restated for documents: no
 content that restates the obvious, no missing provenance, no unreadable
-contrast, no external dependency, and no card shipped without having been looked
+contrast, no external dependency, and no page shipped without having been looked
 at rendered.
 
-## The mechanical contract
-
-### Tokens
-
-CSS custom properties prefixed `--soc-` in `render.mjs`. A design change means
-changing values, not markup.
-
-| Token | Role |
-| --- | --- |
-| `--soc-font-sans` / `--soc-font-mono` | body and headings / code |
-| `--soc-bg`, `--soc-surface`, `--soc-surface-sunk` | page, card, recessed areas |
-| `--soc-ink`, `--soc-ink-soft`, `--soc-ink-faint` | primary, secondary, metadata |
-| `--soc-line` | borders and rules |
-| `--soc-accent`, `--soc-accent-soft` | links, highlights, step counters |
-| `--soc-good`, `--soc-warn`, `--soc-bad` (+ `-soft`) | contrast panes, callouts |
-| `--soc-radius`, `--soc-radius-sm` | corner rounding |
-| `--soc-measure` | prose line length, ~68ch |
-| `--soc-shadow` | elevation |
-
-Every token needs both a light and a dark value.
-
-### Layouts
-
-Pick one. Defaults to `standard`.
-
-| Layout | When |
-| --- | --- |
-| `standard` | Mixed blocks. The default, and correct most of the time. |
-| `before-after` | The card is essentially one `contrast`. Tightens rhythm, gives the two panes room. |
-| `walkthrough` | Ordered sequence: steps diagram plus a snippet per step. |
-| `reference-sheet` | Dense and scan-oriented. Smaller type, more snippets, less prose. Something to come back to rather than read once. |
-
-A layout changes rhythm and emphasis. It never changes the block vocabulary.
-
-### Blocks
-
-`explanation`, `snippet`, `contrast`, `diagram`, `drill`, `callout`,
-`reference`. Full field reference in `card-model.md`.
 
 ## Interactivity
 
@@ -137,7 +99,7 @@ socrates mood add --json '{
   "source": "example.com",
   "steal": "Move the pane labels outside the code block so the eye lands on the code first.",
   "tags": ["editorial", "code-layout"],
-  "appliesTo": ["card"],
+  "appliesTo": ["page"],
   "palette": [
     { "hex": "#faf8f4", "role": "background" },
     { "hex": "#a8551f", "role": "accent" }
@@ -154,7 +116,7 @@ Rules that keep this from turning into a Pinterest hole:
 1. **`steal` is required and must be specific.** "Nice colours" is not a
    reference. "Labels outside the block, 1.1 line-height on code, one accent
    only" is.
-2. **Mood images are never embedded in cards.** Cards stay self-contained,
+2. **Mood images are never embedded in pages.** Pages stay self-contained,
    offline and attribution-neutral. Moods inform tokens; they do not ship.
 3. **Palette extraction is done by looking at the image**, not by a library.
    That keeps the plugin dependency-free and works in any harness with vision.
@@ -167,7 +129,7 @@ Rules that keep this from turning into a Pinterest hole:
 The mood board is also the working prototype for the board view we want later,
 so improvements to it are not throwaway.
 
-## Reviewing a card before shipping it
+## Reviewing a page before shipping it
 
 Score it only after opening the rendered HTML.
 
@@ -186,10 +148,10 @@ Score it only after opening the rendered HTML.
 Below 70, rework it or do not ship it. Two automatic failures, regardless of
 score:
 
-- **No provenance.** A card that cannot point at the work it came from is a blog
+- **No provenance.** A page that cannot point at the work it came from is a blog
   post.
 - **Fails the bar.** If the candidate does not pass all five tests in the
-  `generate-learning` skill, it is not a card and no amount of craft rescues it.
+  `generate-learning` skill, it is not a page and no amount of craft rescues it.
   Title hook, lookup-shaped lesson, or a claim that only holds in one repository
   all fail here.
 
@@ -197,6 +159,6 @@ score:
 
 - Typography has not been chosen deliberately yet — the current stack is a
   system default. This is the highest-leverage thing on the mood board.
-- Only four layouts. Adding more should wait until a real card does not fit.
+- Only four layouts. Adding more should wait until a real page does not fit.
 - The index grid is functional, not designed. It is the surface the board view
   will replace.
