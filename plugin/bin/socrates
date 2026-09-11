@@ -8,7 +8,14 @@
 // commands belong here too once the engine lands.
 
 import { createInterface } from "node:readline";
+import { readFileSync } from "node:fs";
 import { listCards, recordCard, reviewCard } from "../lib/card.mjs";
+import {
+  capture,
+  digest,
+  listSessions,
+  readSession,
+} from "../lib/capture.mjs";
 import {
   downloadMoodAsset,
   listMoods,
@@ -71,8 +78,17 @@ function fail(message) {
 }
 
 async function readPayload(flags, what) {
+  // --json-file avoids shell quoting entirely, which matters when the payload
+  // contains html.
+  if (typeof flags["json-file"] === "string") {
+    try {
+      return JSON.parse(readFileSync(flags["json-file"], "utf8"));
+    } catch (error) {
+      fail(`could not read ${flags["json-file"]}: ${error.message}`);
+    }
+  }
   const raw = typeof flags.json === "string" ? flags.json : await readStdin();
-  if (!raw) fail(`${what} expects a JSON object on stdin or via --json`);
+  if (!raw) fail(`${what} expects a JSON object on stdin, via --json, or via --json-file`);
   try {
     return JSON.parse(raw);
   } catch (error) {
@@ -119,7 +135,9 @@ async function cardAdd(flags) {
 
 function cardList(flags) {
   let cards = listCards(resolveHome());
+  // Retired cards stay in the store (append-only) but are not part of the feed.
   if (flags.status) cards = cards.filter((c) => c.review.status === flags.status);
+  else if (!flags.all) cards = cards.filter((c) => c.review.status !== "retired");
   if (flags.topic) cards = cards.filter((c) => c.topic === flags.topic);
   if (flags.tag) cards = cards.filter((c) => c.tags.includes(flags.tag));
   return cards.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
@@ -154,6 +172,29 @@ function moodBoard(flags) {
   return { wrote: renderMoodBoardTo(home), items: listMoods(home).length };
 }
 
+function captureRun(flags) {
+  const home = resolveHome();
+  ensureDirs(home);
+
+  // Explicit selection only. A bare `capture` means "sync everything I already
+  // have", which is cheap after the first run because unchanged files are
+  // skipped by cursor.
+  const files = [];
+  if (typeof flags.file === "string") files.push(flags.file);
+  if (flags.current) {
+    const current = process.env.PI_SESSION_FILE;
+    if (!current) fail("no current session here (PI_SESSION_FILE is unset)");
+    files.push(current);
+  }
+
+  return capture({
+    home,
+    only: files.length ? files : undefined,
+    harness: typeof flags.harness === "string" ? flags.harness : undefined,
+    force: Boolean(flags.force),
+  });
+}
+
 function tasteList(flags) {
   const home = resolveHome();
   let statements = readLatestById(paths(home).statements);
@@ -184,10 +225,15 @@ function tasteRetire(id) {
 }
 
 async function main() {
-  const [group, command, ...rest] = process.argv.slice(2);
-  const { flags, positional } = parseArgs(rest);
-  // NOTE: for `taste add`, --json is the *input* payload. Output format is
-  // controlled separately so the two never get tangled.
+  // Parse the whole argv so flags can appear before, between or after the
+  // positional words. `socrates capture --file X` and `socrates capture X` both
+  // have to work.
+  const parsed = parseArgs(process.argv.slice(2));
+  const [group, command, ...positional] = parsed.positional;
+  const flags = parsed.flags;
+
+  // NOTE: for `taste add` and `card add`, --json is the *input* payload. Output
+  // format is controlled separately so the two never get tangled.
   const asJson = flags.format === "json" || process.env.SOCRATES_FORMAT === "json";
 
   if (!group || group === "help" || flags.help) {
@@ -203,7 +249,7 @@ async function main() {
         "          retire <id>",
         "",
         "  card    add [--json '<json>'] [--no-render]",
-        "          list [--status --topic --tag]",
+        "          list [--status --topic --tag] [--all]",
         "          review <id> --status known|learning|seen|retired",
         "",
         "  render  [--id <card-id>] [--mood]        rebuild html (all cards by default)",
@@ -213,7 +259,12 @@ async function main() {
         "          board                          render site/mood.html",
         "          adopt <id> | reject <id>",
         "",
+        "  capture [--current] [--file <path>] [--harness <h>] [--force]",
+        "          list                           captured sessions",
+        "          show <id>                      readable transcript digest",
+        "",
         "  --format json                          machine-readable output",
+        "  --json-file <path>                     read the payload from a file",
         "  SOCRATES_HOME                          data root (default ~/.socrates)",
       ].join("\n"),
       false,
@@ -236,6 +287,28 @@ async function main() {
       fail(error.message);
     }
     return;
+  }
+
+  if (group === "capture") {
+    const home = resolveHome();
+    if (command === "list") {
+      out(listSessions(home), asJson);
+      return;
+    }
+    if (command === "show") {
+      const id = positional[0] ?? flags.id;
+      if (!id) fail("capture show needs a session id");
+      const events = readSession(home, id);
+      if (!events) fail(`no captured session matching ${id}`);
+      out(asJson ? events : digest(events), false);
+      return;
+    }
+    // `socrates capture` with no subcommand, or `socrates capture run`
+    if (!command || command === "run") {
+      out(captureRun(flags), asJson);
+      return;
+    }
+    fail(`unknown capture command: ${command}`);
   }
 
   if (group === "mood") {

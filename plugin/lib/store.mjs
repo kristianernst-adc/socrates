@@ -58,9 +58,10 @@ export function paths(home = resolveHome()) {
     moodDir: join(home, "mood"),
     moods: join(home, "mood", "items.jsonl"),
     moodAssets: join(home, "mood", "assets"),
-    siteDir: join(home, "site"),
-    siteIndex: join(home, "site", "index.html"),
-    siteMoodBoard: join(home, "site", "mood.html"),
+    // Output sits at the top level so you can open the folder and just see it.
+    board: join(home, "index.html"),
+    pagesDir: join(home, "pages"),
+    moodBoard: join(home, "mood.html"),
   };
 }
 

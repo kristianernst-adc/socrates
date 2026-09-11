@@ -8,7 +8,7 @@
 // curated design is a matter of replacing tokens and component rules rather than
 // rewriting this file. See skills/generate-learning/references/design-system.md.
 
-import { mkdirSync } from "node:fs";
+import { mkdirSync, readdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { listCards } from "./card.mjs";
 import { listMoods, MOOD_STATUSES } from "./mood.mjs";
@@ -40,6 +40,7 @@ const TOKENS = `
   --soc-bg: #faf8f4;
   --soc-surface: #ffffff;
   --soc-surface-sunk: #f2efe9;
+  --soc-paper: #fffdf7;
   --soc-ink: #171a20;
   --soc-ink-soft: #5d6470;
   --soc-ink-faint: #8b909b;
@@ -62,6 +63,7 @@ const TOKENS = `
     --soc-bg: #131417;
     --soc-surface: #1b1d22;
     --soc-surface-sunk: #232529;
+    --soc-paper: #1d1f24;
     --soc-ink: #ebe8e2;
     --soc-ink-soft: #a2a7b1;
     --soc-ink-faint: #767c86;
@@ -95,14 +97,9 @@ code{font-family:var(--soc-font-mono); font-size:.88em}
   box-shadow:var(--soc-shadow); overflow:hidden}
 
 /* ---------- head ---------- */
-.head{padding:2.25rem 2.5rem 1.75rem; border-bottom:1px solid var(--soc-line)}
-.kicker{display:flex; flex-wrap:wrap; gap:.5rem; align-items:center; margin:0 0 1rem;
-  font-size:.73rem; letter-spacing:.09em; text-transform:uppercase; color:var(--soc-ink-faint); font-weight:600}
-.kicker span+span::before{content:"·"; margin-right:.5rem; color:var(--soc-line)}
+.head{padding:3rem 2.5rem 1.75rem; border-bottom:1px solid var(--soc-line)}
 h1{margin:0; font-size:1.95rem; line-height:1.22; letter-spacing:-.017em; font-weight:660}
 .sub{margin:.7rem 0 0; color:var(--soc-ink-soft); font-size:1.06rem; line-height:1.5; max-width:56ch}
-
-/* ---------- body ---------- */
 .body{padding:2rem 2.5rem 2.25rem; display:flex; flex-direction:column; gap:2rem}
 .block{margin:0}
 .prose{max-width:var(--soc-measure)}
@@ -163,9 +160,7 @@ details.drill{border:1px solid var(--soc-line); border-left:3px solid var(--soc-
   border-radius:var(--soc-radius-sm); background:var(--soc-surface-sunk); padding:.9rem 1.1rem}
 details.drill summary{cursor:pointer; font-weight:620; list-style:none}
 details.drill summary::-webkit-details-marker{display:none}
-details.drill summary::after{content:" ▸"; color:var(--soc-ink-faint)}
-details.drill[open] summary::after{content:" ▾"}
-.drill__hint{margin:.7rem 0 0; font-size:.85rem; color:var(--soc-ink-faint)}
+details.drill summary::after{content:" →"; color:var(--soc-ink-faint); font-weight:400}
 .drill__answer{margin:.85rem 0 0; padding-top:.85rem; border-top:1px dashed var(--soc-line)}
 .drill__answer p:first-child{margin-top:0}
 .drill__answer p:last-child{margin-bottom:0}
@@ -193,29 +188,59 @@ ul.refs .refs__why{display:block; font-size:.84rem; color:var(--soc-ink-soft)}
 .foot code{font-size:.94em}
 .foot .dot::before{content:"·"; margin-right:1.1rem; color:var(--soc-line)}
 
-/* ---------- index ---------- */
-.board__head{margin-bottom:2.5rem}
-.board__head h1{font-size:2.2rem}
-.board__stats{display:flex; flex-wrap:wrap; gap:.45rem; margin-top:1.1rem}
-.chip{font-size:.76rem; font-weight:600; padding:.28rem .6rem; border-radius:999px;
-  background:var(--soc-surface); border:1px solid var(--soc-line); color:var(--soc-ink-soft)}
-.topic{margin:0 0 2.5rem}
+/* ---------- index: nothing forced ---------- */
+/* (the board lives above; this only styles the mood board groups) */
+.topic{margin:0 0 3rem}
 .topic h2{font-size:.78rem; letter-spacing:.09em; text-transform:uppercase; color:var(--soc-ink-faint);
-  font-weight:700; margin:0 0 .9rem; padding-bottom:.5rem; border-bottom:1px solid var(--soc-line)}
-.grid{display:grid; gap:1rem; grid-template-columns:repeat(auto-fill,minmax(17rem,1fr))}
-.tile{display:block; text-decoration:none; color:inherit; background:var(--soc-surface);
-  border:1px solid var(--soc-line); border-radius:var(--soc-radius); padding:1.15rem 1.25rem;
-  box-shadow:var(--soc-shadow); transition:transform .12s ease, border-color .12s ease}
-.tile:hover{transform:translateY(-2px); border-color:var(--soc-accent)}
-.tile__meta{font-size:.71rem; letter-spacing:.07em; text-transform:uppercase; color:var(--soc-ink-faint);
-  font-weight:600; margin-bottom:.5rem}
-.tile__title{font-weight:640; font-size:1.03rem; line-height:1.35; margin:0 0 .4rem}
-.tile__summary{font-size:.87rem; color:var(--soc-ink-soft); margin:0; line-height:1.5}
-.tile__tags{display:flex; flex-wrap:wrap; gap:.3rem; margin-top:.85rem}
-.tile__tags .chip{font-size:.7rem; padding:.16rem .5rem}
-.empty{color:var(--soc-ink-soft)}
+  font-weight:700; margin:0 0 1.2rem; padding-bottom:.5rem; border-bottom:1px solid var(--soc-line)}
 .back{display:inline-block; margin-bottom:1.4rem; font-size:.84rem; text-decoration:none; color:var(--soc-ink-faint)}
-@media print{body{background:#fff}.tile,.card{box-shadow:none}details.drill{break-inside:avoid}}
+@media print{body{background:#fff}.paper,.card{box-shadow:none}details.drill{break-inside:avoid}}
+
+/* ---------- board: papers on a surface ---------- */
+.board__head{max-width:80rem; margin:0 auto; padding:3.5rem 2rem 0}
+.board__head h1{font-size:.76rem; letter-spacing:.16em; text-transform:uppercase;
+  color:var(--soc-ink-faint); font-weight:700; margin:0}
+.canvas{max-width:80rem; margin:0 auto; padding:2.5rem 2rem 7rem;
+  display:flex; flex-wrap:wrap; gap:2.4rem 2.1rem; align-items:flex-start}
+.paper{--r:0deg; --y:0px; display:block; position:relative; width:14rem; min-height:9.5rem;
+  padding:1.15rem 1.15rem 1.5rem; text-decoration:none; color:inherit;
+  background:var(--soc-paper); border:1px solid var(--soc-line); border-radius:3px;
+  box-shadow:0 1px 1px rgba(20,18,14,.045), 0 7px 16px -12px rgba(20,18,14,.5);
+  transform:rotate(var(--r)) translateY(var(--y)); will-change:transform;
+  transition:transform .3s cubic-bezier(.2,.8,.2,1), box-shadow .3s ease}
+.paper:hover,.paper:focus-visible{transform:rotate(0deg) translateY(calc(var(--y) - 12px)) scale(1.05);
+  box-shadow:0 2px 3px rgba(20,18,14,.05), 0 22px 38px -20px rgba(20,18,14,.55);
+  z-index:20; outline:none}
+.paper:hover .paper__inner,.paper:focus-visible .paper__inner{animation:wiggle .5s cubic-bezier(.3,.9,.3,1)}
+@keyframes wiggle{
+  0%{transform:rotate(0)}
+  22%{transform:rotate(2.1deg)}
+  44%{transform:rotate(-1.7deg)}
+  66%{transform:rotate(1.1deg)}
+  84%{transform:rotate(-.5deg)}
+  100%{transform:rotate(0)}}
+.paper::after{content:""; position:absolute; right:0; bottom:0; width:0; height:0;
+  border-style:solid; border-width:0 0 15px 15px;
+  border-color:transparent transparent var(--soc-bg) transparent}
+.paper__topic{font-size:.62rem; letter-spacing:.12em; text-transform:uppercase;
+  color:var(--soc-ink-faint); font-weight:700; margin:0 0 .55rem}
+.paper__title{font-weight:640; font-size:.97rem; line-height:1.34; margin:0; letter-spacing:-.005em}
+.paper__summary{margin:.6rem 0 0; font-size:.815rem; line-height:1.45; color:var(--soc-ink-soft);
+  display:-webkit-box; -webkit-line-clamp:4; -webkit-box-orient:vertical; overflow:hidden}
+@media (prefers-reduced-motion:reduce){
+  .paper{transition:none}
+  .paper:hover,.paper:focus-visible{transform:rotate(0deg) translateY(calc(var(--y) - 6px)) scale(1.03)}
+  .paper:hover .paper__inner,.paper:focus-visible .paper__inner{animation:none}}
+.empty{color:var(--soc-ink-soft); max-width:80rem; margin:0 auto; padding:0 2rem}
+
+/* Minimal shell for a hand-written fragment that isn't a full document. */
+.frag{max-width:42rem; margin:0 auto; padding:4rem 1.5rem 6rem; line-height:1.65}
+.frag h1{font-size:1.6rem; letter-spacing:-.015em; margin:0 0 1rem}
+.frag h2{font-size:1.15rem; margin:2.2rem 0 .7rem}
+.frag pre{background:var(--soc-surface-sunk); border:1px solid var(--soc-line); border-radius:8px;
+  padding:1rem; overflow-x:auto; font-family:var(--soc-font-mono); font-size:.83rem}
+.frag code{font-family:var(--soc-font-mono); font-size:.88em}
+.frag img{max-width:100%; height:auto; border-radius:8px}
 
 /* ---------- layouts ---------- */
 /* Named layouts beat improvising spacing per card. Deliberately small: a layout
@@ -234,6 +259,8 @@ ul.refs .refs__why{display:block; font-size:.84rem; color:var(--soc-ink-soft)}
 .layout--reference-sheet .foot{padding:1rem 2rem 1.15rem}
 
 /* ---------- mood board ---------- */
+.chip{font-size:.76rem; font-weight:600; padding:.28rem .6rem; border-radius:999px;
+  background:var(--soc-surface); border:1px solid var(--soc-line); color:var(--soc-ink-soft)}
 .mood-grid{columns:3 17rem; column-gap:1rem; margin:0}
 .mood{break-inside:avoid; margin:0 0 1rem; background:var(--soc-surface);
   border:1px solid var(--soc-line); border-radius:var(--soc-radius); overflow:hidden;
@@ -347,7 +374,6 @@ function renderBlock(block) {
     case "drill":
       return `<details class="drill block">
         <summary>${inline(block.prompt)}</summary>
-        ${block.hint ? `<p class="drill__hint">${inline(block.hint)}</p>` : ""}
         ${block.answer ? `<div class="drill__answer prose">${paragraphs(block.answer)}</div>` : ""}
       </details>`;
 
@@ -375,16 +401,45 @@ function renderBlock(block) {
 const footerBits = (card) => {
   const p = card.provenance;
   const bits = [];
-  if (p.repo) bits.push(`<span><code>${escapeHtml(p.repo)}</code></span>`);
+  if (p.repo) bits.push(`<span>${escapeHtml(p.repo)}</span>`);
   else if (p.cwd) bits.push(`<span><code>${escapeHtml(p.cwd)}</code></span>`);
-  if (p.files.length) bits.push(`<span><code>${escapeHtml(p.files.slice(0, 3).join(", "))}</code></span>`);
+  for (const file of p.files.slice(0, 3)) {
+    bits.push(`<span><code>${escapeHtml(file)}</code></span>`);
+  }
   if (p.harness) bits.push(`<span>${escapeHtml(p.harness)}${p.model ? `/${escapeHtml(p.model)}` : ""}</span>`);
-  if (p.sessionId) bits.push(`<span>session <code>${escapeHtml(p.sessionId.slice(0, 8))}</code></span>`);
-  bits.push(`<span>review: ${escapeHtml(card.review.status)}</span>`);
   return bits.join('<span class="dot"></span>');
 };
 
+const DOC_RX = /^\s*(<!doctype|<html)/i;
+
+/** A hand-written page is used verbatim. A fragment gets a plain shell. */
+function ensureDocument(html, title) {
+  if (DOC_RX.test(html)) return html;
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${escapeHtml(title)}</title>
+<style>${TOKENS}
+body{margin:0;background:var(--soc-bg);color:var(--soc-ink);font-family:var(--soc-font-sans);font-size:17px}
+</style>
+</head>
+<body>
+<main class="frag">
+${html}
+</main>
+</body>
+</html>
+`;
+}
+
 export function renderCard(card) {
+  if (card.html) return ensureDocument(card.html, card.title);
+  return renderBlockCard(card);
+}
+
+function renderBlockCard(card) {
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -395,15 +450,9 @@ export function renderCard(card) {
 </head>
 <body>
 <div class="page">
-  <a class="back" href="index.html">← all learnings</a>
+  <a class="back" href="../index.html">← all learnings</a>
   <article class="card layout--${escapeHtml(card.layout)}">
     <header class="head">
-      <p class="kicker">
-        <span>${escapeHtml(card.topic)}</span>
-        <span>${escapeHtml(card.difficulty)}</span>
-        <span>${card.estimatedMinutes} min</span>
-        ${card.signals.why ? `<span>${escapeHtml(card.signals.why)}</span>` : ""}
-      </p>
       <h1>${escapeHtml(card.title)}</h1>
       ${card.subtitle ? `<p class="sub">${inline(card.subtitle)}</p>` : ""}
     </header>
@@ -418,51 +467,36 @@ export function renderCard(card) {
 `;
 }
 
-export function renderIndex(cards) {
-  const open = cards.filter((c) => c.review.status !== "retired");
-  const byTopic = new Map();
-  for (const card of open) {
-    if (!byTopic.has(card.topic)) byTopic.set(card.topic, []);
-    byTopic.get(card.topic).push(card);
-  }
-  const topics = [...byTopic.entries()].sort((a, b) => b[1].length - a[1].length);
-  const due = open.filter(
-    (c) =>
-      c.review.status === "new" ||
-      (c.review.lastReviewedAt &&
-        Date.now() - Date.parse(c.review.lastReviewedAt) > c.review.intervalDays * 864e5),
-  );
+/**
+ * Stable pseudo-random placement, so a paper sits in the same spot every time.
+ * Restrained on purpose: enough variation to read as loose paper, not so much
+ * that it looks like a ransom note.
+ */
+function paperStyle(id) {
+  let h = 0;
+  for (let i = 0; i < id.length; i += 1) h = (h * 31 + id.charCodeAt(i)) | 0;
+  const h2 = Math.abs(h);
+  const rotation = ((h2 % 760) / 100 - 3.8).toFixed(2);
+  const drop = (((h2 >> 9) % 1000) / 100 - 5).toFixed(2);
+  return `--r:${rotation}deg; --y:${drop}px`;
+}
 
-  const stats = [
-    `${open.length} card${open.length === 1 ? "" : "s"}`,
-    `${due.length} to review`,
-    `${topics.length} topic${topics.length === 1 ? "" : "s"}`,
-  ]
-    .map((label) => `<span class="chip">${escapeHtml(label)}</span>`)
-    .join("");
+export function renderBoard(cards) {
+  const open = cards
+    .filter((c) => c.review.status !== "retired")
+    .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
 
-  const sections = topics
-    .map(([topic, group]) => {
-      const tiles = group
-        .slice()
-        .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))
-        .map((card) => {
-          const tags = card.tags.map((t) => `<span class="chip">${escapeHtml(t)}</span>`).join("");
-          return `<a class="tile" href="cards/${escapeHtml(card.id)}.html">
-          <p class="tile__meta">${escapeHtml(card.difficulty)} · ${card.estimatedMinutes} min${
-            card.review.status !== "new" ? ` · ${escapeHtml(card.review.status)}` : ""
-          }</p>
-          <h3 class="tile__title">${escapeHtml(card.title)}</h3>
-          ${card.summary ? `<p class="tile__summary">${inline(card.summary)}</p>` : ""}
-          ${tags ? `<div class="tile__tags">${tags}</div>` : ""}
-        </a>`;
-        })
-        .join("\n        ");
-      return `<section class="topic"><h2>${escapeHtml(topic)}</h2><div class="grid">
-        ${tiles}
-      </div></section>`;
-    })
-    .join("\n");
+  const papers = open
+    .map(
+      (card) => `<a class="paper" href="pages/${escapeHtml(card.id)}.html" style="${paperStyle(card.id)}">
+    <div class="paper__inner">
+      <p class="paper__topic">${escapeHtml(card.topic)}</p>
+      <h2 class="paper__title">${escapeHtml(card.title)}</h2>
+      ${card.summary ? `<p class="paper__summary">${inline(card.summary)}</p>` : ""}
+    </div>
+  </a>`,
+    )
+    .join("\n  ");
 
   return `<!doctype html>
 <html lang="en">
@@ -473,13 +507,12 @@ export function renderIndex(cards) {
 <style>${TOKENS}${BASE_CSS}</style>
 </head>
 <body>
-<div class="page">
-  <header class="board__head">
-    <h1>Learnings</h1>
-    <div class="board__stats">${stats}</div>
-  </header>
-  ${open.length ? sections : '<p class="empty">No cards yet. Generate one from a session.</p>'}
-</div>
+<header class="board__head">
+  <h1>Learnings</h1>
+</header>
+<main class="canvas">
+  ${papers}
+</main>
 </body>
 </html>
 `;
@@ -546,14 +579,6 @@ export function renderMoodBoard(moods) {
   const rejected = moods.filter((m) => m.status === "rejected");
   if (rejected.length) groups.push({ status: "rejected", items: rejected });
 
-  const stats = [
-    `${moods.length} reference${moods.length === 1 ? "" : "s"}`,
-    `${moods.filter((m) => m.status === "adopted").length} adopted`,
-    `${moods.filter((m) => m.status === "candidate").length} candidates`,
-  ]
-    .map((label) => `<span class="chip">${escapeHtml(label)}</span>`)
-    .join("");
-
   const body = groups
     .map(
       (group) => `<section class="topic"><h2>${escapeHtml(group.status)}</h2><div class="mood-grid">
@@ -575,7 +600,6 @@ export function renderMoodBoard(moods) {
   <a class="back" href="index.html">← all learnings</a>
   <header class="board__head">
     <h1>Mood board</h1>
-    <div class="board__stats">${stats}</div>
   </header>
   <p class="legend">Visual references collected from the web, each with the one thing
   worth taking from it. These inform the design tokens. They are never embedded in
@@ -589,26 +613,41 @@ export function renderMoodBoard(moods) {
 
 /** Write the mood board. Returns the path. */
 export function renderMoodBoardTo(home) {
-  const file = paths(home).siteMoodBoard;
+  const file = paths(home).moodBoard;
   writeAtomic(file, renderMoodBoard(listMoods(home)));
   return file;
 }
 
-/** Write one card's page plus the index. Returns the paths written. */
+/** Write the board and every page. Returns the paths written. */
 export function renderAll(home) {
   const target = paths(home);
-  const cards = listCards(home);
-  const cardDir = join(target.siteDir, "cards");
-  mkdirSync(cardDir, { recursive: true });
+  // Retired cards stay in the store but must not be rendered, or their pages
+  // linger and the orphan sweep below treats them as live.
+  const cards = listCards(home).filter((c) => c.review.status !== "retired");
+  mkdirSync(target.pagesDir, { recursive: true });
 
   const written = [];
+  const live = new Set();
   for (const card of cards) {
-    const file = join(cardDir, `${card.id}.html`);
+    const file = join(target.pagesDir, `${card.id}.html`);
     writeAtomic(file, renderCard(card));
     written.push(file);
+    live.add(`${card.id}.html`);
   }
-  writeAtomic(target.siteIndex, renderIndex(cards));
-  written.push(target.siteIndex);
+
+  // Pages for retired cards should not be left behind. Only ever touch files we
+  // could have written ourselves.
+  for (const name of readdirSync(target.pagesDir)) {
+    if (live.has(name) || !/^crd_[a-z0-9]+[.]html$/.test(name)) continue;
+    try {
+      unlinkSync(join(target.pagesDir, name));
+    } catch {
+      /* an orphan page is not worth failing a render over */
+    }
+  }
+
+  writeAtomic(target.board, renderBoard(cards));
+  written.push(target.board);
   return { written, cards: cards.length };
 }
 
@@ -616,9 +655,10 @@ export function renderOne(id, home) {
   const target = paths(home);
   const card = listCards(home).find((c) => c.id === id);
   if (!card) throw new Error(`no card with id ${id}`);
-  mkdirSync(join(target.siteDir, "cards"), { recursive: true });
-  const file = join(target.siteDir, "cards", `${card.id}.html`);
+  if (card.review.status === "retired") throw new Error(`card ${id} is retired; reinstate it before rendering`);
+  mkdirSync(target.pagesDir, { recursive: true });
+  const file = join(target.pagesDir, `${card.id}.html`);
   writeAtomic(file, renderCard(card));
-  writeAtomic(target.siteIndex, renderIndex(listCards(home)));
+  writeAtomic(target.board, renderBoard(listCards(home)));
   return file;
 }

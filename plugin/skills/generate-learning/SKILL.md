@@ -15,23 +15,71 @@ shortest artifact that would make the reader genuinely understand it.
 Not a tutorial. Not documentation. A card, grounded in the reader's own code,
 that takes about five minutes.
 
-## When to make one
+## The bar
 
-Make a card when there is real evidence of a gap:
+**Most sessions should produce zero cards.** That is the expected outcome, not a
+failure. A feed where everything becomes a card is a feed nobody reads, and a
+learning tool that produces homework is worse than no learning tool.
+
+Signals that something *might* be a gap:
 
 - the user asks the agent to explain something it just did
 - the user accepted a large or non-obvious change without follow-up
 - the user copied a command, flag or pattern without reading it
 - the same class of question has come up before
-- something failed in a way the user could not have predicted from what they knew
-- the user explicitly asks to learn from a session
+- something failed in a way the user could not have predicted
 
-**Do not make a card when nothing was learned.** A card that restates the obvious
-is how a learning tool becomes noise. If there is no gap, say so — that is a
-valid and useful answer.
+But a signal is not a qualification. A candidate must pass **all five** tests:
 
-If the user's reaction was about *style* rather than understanding, that is
-`update-taste`, not this skill.
+1. **Transfer.** Would this still be true on a project you have not started yet?
+   If it only holds here, it is a code-review comment, not a lesson.
+2. **Lookup.** Could a competent engineer find this in one search? Then it is a
+   lookup. Names of flags, environment variables, versions and APIs fail here,
+   and they fail hard.
+3. **Recurrence.** Would you plausibly get this wrong *again*? If you would never
+   make the mistake now, you have already learned it and a card adds nothing.
+4. **Decision.** Does it change a decision you make, or is it trivia? Prefer
+   things that change how you would design something.
+5. **Model.** Can you state the underlying principle in one sentence that is not
+   just a restatement of the incident?
+
+And the one that kills most candidates, stated plainly:
+**the user asked about it ≠ it is worth learning.** Questions come from curiosity,
+confusion and completeness. Only confusion is a gap.
+
+Where the rejects go:
+
+| Fails because… | Belongs in |
+| --- | --- |
+| they would want it done differently next time (style, approach, taste) | `update-taste` |
+| it is a fact you can look up | nowhere — they already have the lookup |
+| it is specific to this one piece of work | nowhere — it is already in the code |
+| they have already learned it | nowhere — that would be revision they don't need |
+
+Saying "nothing here is worth a card" is a good outcome. Say it plainly and
+move on.
+
+## Titles
+
+The index is a reference someone scans in six months, not a feed they scroll.
+A title has to let them decide whether to open the card, and let them find it
+again by searching for the concept.
+
+- **Name the concept, not the incident.** What happened goes in the page; the
+  title carries the general idea.
+- **Declare, don't tease.** No hooks, no rhetorical questions, no second person,
+  no "why X is bad". If the title is working to make you curious, it is a blog
+  headline and it will be useless on the board.
+- **Lead with the concept, put the trap in the subtitle.**
+- **Use the durable noun** — the word someone would actually search for.
+- **Keep `summary` short.** It is clamped to a few lines on the board's paper.
+
+| Bad | Why it fails | Good |
+| --- | --- | --- |
+| Load more doesn't load more | Hook. Says nothing about the subject. | Ranked search pages within a capped candidate pool |
+| The fallback that fires on almost every request | Hook, and describes the bug rather than the lesson | Gate a fallback on zero results, not on a partial set |
+| Using a fork means inheriting its parent's ecosystem | Hook-shaped, and the lesson underneath is a lookup | — |
+| Aliases that point to nothing | Describes the incident | Foreign keys enforce existence, not availability |
 
 ## Steps
 
@@ -48,61 +96,58 @@ If the user's reaction was about *style* rather than understanding, that is
    Or read the compiled block at `TASTE.md` in the data root (`socrates home`).
    Respect what is there; do not re-litigate it.
 
-3. **Load the design context.** Before touching anything visual, read:
+3. **Load the design context.** Two optional resources, not a template:
 
-   - `../benji-taste/SKILL.md` — the visual reference
-   - `references/design-system.md` — the translation for static documents, the
-     token contract, and the four named layouts
+   - `../benji-taste/SKILL.md` — principles for interfaces. Skim it if you are
+     making layout or typography decisions.
+   - `references/design-system.md` — the `--soc-*` tokens and a set of ready-made
+     blocks, if you would rather compose than write HTML from scratch.
 
-   Do not invent a layout. Pick one of the four, or say why none of them fit.
+   Use them, mix them, or ignore them. There is no required shape.
 
 4. **Pull the real code.** Verbatim from the session, the diff, or the file. Not
    a paraphrase, not a simplified invention. If you change it to make a point,
    say that you changed it.
 
-5. **Choose blocks honestly.** Usually three to five. The vocabulary:
-
-   | Block | Use it for |
-   | --- | --- |
-   | `explanation` | the idea itself, in a few paragraphs |
-   | `snippet` | code that actually ran, with a caption and optional highlighted lines |
-   | `contrast` | what happened vs. what would have been better — the highest-value block |
-   | `diagram` | structure that prose makes worse: a flow, an ordered sequence, stacked layers |
-   | `drill` | one short question the reader answers, with a reveal |
-   | `callout` | the one thing that bites: a gotcha, a warning, a tip |
-   | `reference` | where to read the real documentation |
-
-   A card of four `explanation` blocks is a blog post. Prefer a `contrast` or a
-   `diagram` over another paragraph.
-
-6. **Pick a layout** from `design-system.md`: `standard`, `before-after`,
-   `walkthrough`, or `reference-sheet`. The layout decides rhythm and what the
-   eye lands on first, so choose it deliberately.
-
-7. **Calibrate difficulty** against what the reader actually demonstrated, not
-   against how clever the material is. `intro` for first contact, `working` for
-   the normal case, `deep` only if they are already fluent in the surrounding
-   ideas.
-
-8. **Write it.**
+5. **Write the page.** Hand-write HTML. It is your page: choose the structure,
+   the layout, the styling, the length. Nothing is prescribed.
 
    ```bash
-   socrates card add --json '{ ... }'
+   socrates card add --json-file page.json
    ```
 
-   This stores the card and renders one self-contained HTML file. It prints the
-   path. Tell the user where it landed.
+   `page.json` needs `title` (used on the board) and `html`. Everything else is
+   optional metadata the board can use.
 
-8. **Report one line.** What the card covers and where it is. Nothing else.
+   ```json
+   {
+     "title": "Ranked search pages within a capped candidate pool",
+     "summary": "Paging a ranked search past the point where the pool runs out.",
+     "topic": "search",
+     "html": "<!doctype html>...",
+     "provenance": { "repo": "ash-conference", "files": ["services/search/service.py"] }
+   }
+   ```
+
+   `html` may be a complete document — used untouched — or a fragment, which
+   gets wrapped in a plain reading shell. Write a complete document when the
+   shape matters.
+
+   Use `--json-file` rather than `--json` for anything long. It sidesteps shell
+   quoting entirely.
+
+6. **Report one line.** Where it landed. Nothing else.
 
 ## A worked example
 
-Evidence: the user ran `git rebase --onto` from a colleague's suggestion,
-watched it succeed, and asked "why did that work".
+Hand-written HTML is the default, and the more interesting one to write. But if
+you would rather compose than hand-roll a page, the structured block vocabulary
+is still there. Same evidence either way: the user ran `git rebase --onto` from a
+colleague's suggestion, watched it succeed, and asked "why did that work".
 
 ```json
 {
-  "title": "Moving commits off a branch you already pushed",
+  "title": "Rebasing a commit range onto a new base",
   "subtitle": "What `git rebase --onto` does that a plain rebase cannot.",
   "topic": "git",
   "difficulty": "working",
@@ -163,12 +208,12 @@ watched it succeed, and asked "why did that work".
 }
 ```
 
-See `references/card-model.md` for every field and block.
+Every field and block type is in `references/card-model.md`.
 
 Note the shape: it opens with an explanation, lands the contrast, then makes the
-same idea stick three more ways with a snippet, a diagram and a drill. Seven
-blocks is the upper end — four is more typical. `before-after` is the right
-layout here because the contrast is the heart of the card.
+same idea stick three more ways. Seven blocks is the upper end — four is more
+typical. If you wrote this by hand instead, you would probably keep the contrast
+and the drill and drop the rest.
 
 ## Guardrails
 
@@ -178,8 +223,8 @@ layout here because the contrast is the heart of the card.
   what you cut.
 - **Never invent an API or a flag.** If you are not certain it exists, leave it
   out or check.
-- **One idea per card.** Split rather than write a long one. The five-minute
-  ceiling is a feature.
+- **One idea per page.** Split rather than write a long one. If it takes more
+  than a few minutes to read, it is probably two ideas.
 - **Respect the taste file.** If a preference exists and you disagree with it,
   follow it and mention the disagreement once.
 - **Do not redact reality into falseness.** Do not paste secrets. Do redact

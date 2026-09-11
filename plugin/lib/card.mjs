@@ -131,8 +131,14 @@ function normalizeBlock(block, index) {
 }
 
 export function normalizeCard(input) {
+  const html = typeof input?.html === "string" && input.html.trim() ? input.html : undefined;
   const blocks = Array.isArray(input?.blocks) ? input.blocks : [];
-  if (!blocks.length) throw new Error("card requires at least one block");
+
+  // Loosest possible contract: a page is either hand-written html or structured
+  // blocks. Everything else is optional metadata the board can use.
+  if (!html && !blocks.length) {
+    throw new Error("card requires html, or at least one block");
+  }
 
   const now = new Date().toISOString();
   const minutes = Number(input.estimatedMinutes);
@@ -149,11 +155,13 @@ export function normalizeCard(input) {
     tags: Array.isArray(input.tags)
       ? input.tags.filter((t) => typeof t === "string" && t.trim()).slice(0, 8)
       : [],
-    difficulty: DIFFICULTIES.includes(input.difficulty) ? input.difficulty : "working",
+    difficulty: DIFFICULTIES.includes(input.difficulty) ? input.difficulty : undefined,
     layout: LAYOUTS.includes(input.layout) ? input.layout : "standard",
     estimatedMinutes:
-      Number.isFinite(minutes) && minutes > 0 ? Math.min(60, Math.round(minutes)) : 5,
-    blocks: blocks.map(normalizeBlock),
+      Number.isFinite(minutes) && minutes > 0 ? Math.min(60, Math.round(minutes)) : undefined,
+    // Verbatim page. If this is set, blocks are ignored.
+    html,
+    blocks: html ? [] : blocks.map(normalizeBlock),
     // Grounding. A card that cannot point at the work it came from is a blog post.
     provenance: {
       moments: Array.isArray(input.provenance?.moments)

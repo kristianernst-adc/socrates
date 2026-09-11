@@ -140,8 +140,15 @@ Score it only after opening the rendered HTML.
 | Reads in under five minutes | 5 |
 | **Total** | **100** |
 
-Below 70, rework it or do not ship it. Any card with no provenance fails
-outright, regardless of score.
+Below 70, rework it or do not ship it. Two automatic failures, regardless of
+score:
+
+- **No provenance.** A card that cannot point at the work it came from is a blog
+  post.
+- **Fails the bar.** If the candidate does not pass all five tests in the
+  `generate-learning` skill, it is not a card and no amount of craft rescues it.
+  Title hook, lookup-shaped lesson, or a claim that only holds in one repository
+  all fail here.
 
 ## Still to decide
 
