@@ -53,6 +53,14 @@ export function paths(home = resolveHome()) {
     feedback: join(home, "taste", "feedback.jsonl"),
     statements: join(home, "taste", "statements.jsonl"),
     compiled: join(home, "taste", "TASTE.md"),
+    cardsDir: join(home, "cards"),
+    cards: join(home, "cards", "cards.jsonl"),
+    moodDir: join(home, "mood"),
+    moods: join(home, "mood", "items.jsonl"),
+    moodAssets: join(home, "mood", "assets"),
+    siteDir: join(home, "site"),
+    siteIndex: join(home, "site", "index.html"),
+    siteMoodBoard: join(home, "site", "mood.html"),
   };
 }
 

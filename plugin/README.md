@@ -14,21 +14,35 @@ plugin/
   plugin.json          manifest (@schema, name, metadata only — no component paths)
   mcp.json             MCP server declaration
   skills/              fixed discovery location
-    update-taste/
-      SKILL.md
-      references/taste-model.md
+    update-taste/      personalization: turn a reaction into a durable preference
+    generate-learning/ turn real work into a learning card + html
+      references/card-model.md      record fields and block types
+      references/design-system.md   token contract, layouts, mood workflow
+    benji-taste/       the visual reference (vendored, see note below)
   bin/
     socrates           CLI — the automation surface
     socrates-mcp       stdio MCP server — the portable tool surface
   lib/
     store.mjs          data root resolution + JSONL
-    taste.mjs          the taste model
+    taste.mjs          preferences
+    card.mjs           learning cards
+    mood.mjs           web visual references
+    render.mjs         deterministic html (cards, index, mood board)
   com.socrates/        reverse-domain namespace for per-harness extras
 ```
 
 `bin/` and `lib/` are not spec-defined locations. The spec allows any additional
 files and directories alongside the component locations, and the containment
 rules only apply to paths the plugin *declares*.
+
+### vendored skills
+
+`skills/benji-taste/` is a copy of an external, unofficial public-source
+synthesis of Benji Taylor's UI work. It is vendored because it is the visual
+reference and needs to travel with the plugin. It is not ours, it is not endorsed
+by its subject, and it should be re-synced from source rather than edited here.
+The adaptation notes that make it apply to static documents live in
+`generate-learning/references/design-system.md`.
 
 ## Two surfaces, deliberately
 
@@ -89,6 +103,15 @@ echo '{"polarity":"avoid","about":"code comments","statement":"Avoid restating w
 plugin/bin/socrates taste compile
 cat ~/.socrates/taste/TASTE.md
 
+# author and render a learning card (normally done via the skill)
+plugin/bin/socrates card add --json "$(cat card.json)"
+plugin/bin/socrates render
+open "$(plugin/bin/socrates home | python3 -c 'import json,sys;print(json.load(sys.stdin)["home"])')/site/index.html"
+
+# collect a visual reference and see the mood board
+plugin/bin/socrates mood add --json '{"url":"https://example.com","image":"https://example.com/x.jpg","steal":"Labels outside the code block"}'
+plugin/bin/socrates mood board
+
 # exercise the MCP server by hand
 printf '%s\n' \
   '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
@@ -98,12 +121,19 @@ printf '%s\n' \
 
 ## Status
 
-`plugin.json`, `mcp.json`, and the skill are the real shell. `lib/` and `bin/`
-are a working stub — enough to prove the model end to end, not the engine.
+`plugin.json`, `mcp.json`, the skills, and the renderer are real. `lib/` and
+`bin/` implement enough to prove the model end to end, not the engine.
+
+Working today: preferences (record → fold → compile), learning cards
+(author → render → review), the deterministic HTML renderer with four layouts,
+and the mood board with image download.
 
 Not done yet:
 
 - ingest/capture commands (the other half of the project)
 - per-harness hooks under `com.socrates/`
-- wiring `TASTE.md` into a system prompt, or a skill that reads it
-- the scheduled jobs that will keep taste fresh without being asked
+- wiring `TASTE.md` into a system prompt
+- the scheduled jobs that keep cards and taste fresh without being asked
+- MCP tools for cards and moods (only taste is exposed so far)
+- typography has not been chosen deliberately; it is the highest-leverage thing
+  on the mood board
