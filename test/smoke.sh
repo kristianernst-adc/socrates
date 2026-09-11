@@ -126,6 +126,108 @@ check "show --format json is raw events" "$SOCRATES capture show sess_pi --forma
 check "unknown session fails loudly" "{ $SOCRATES capture show nope 2>&1 || true; } | grep -q 'no captured session'"
 
 # ---------------------------------------------------------------------------
+head "capture — delta loading"
+
+DFIX="$TMP/delta"
+DFIX2="$TMP/settle"
+printf '%s\n' \
+ '{"type":"session","version":3,"id":"sess_delta","timestamp":"2026-01-01T10:00:00.000Z","cwd":"/tmp/demo"}' \
+ '{"type":"message","id":"d1","timestamp":"2026-01-01T10:00:01.000Z","message":{"role":"user","content":[{"type":"text","text":"why did that rebase work?"}],"timestamp":1}}' \
+ > "$DFIX.jsonl"
+$SOCRATES capture --file "$DFIX.jsonl" --harness pi >/dev/null
+DOUT="$SOCRATES_HOME/events/pi/sess_delta.jsonl"
+BASE_LINES="$(wc -l < "$DOUT" | tr -d ' ')"
+BASE_HEAD="$(head -2 "$DOUT" | md5)"
+
+# Append an assistant turn with a tool call, but no result yet.
+printf '%s\n' \
+ '{"type":"message","id":"d2","timestamp":"2026-01-01T10:00:02.000Z","message":{"role":"assistant","content":[{"type":"text","text":"Because --onto names the base."},{"type":"toolCall","id":"tc_delta","name":"bash","arguments":{"command":"git rebase --onto main feature-a"}}],"timestamp":2}}' \
+ >> "$DFIX.jsonl"
+$SOCRATES capture --file "$DFIX.jsonl" --harness pi --format json > "$TMP/delta1.json"
+check "an appended file takes the delta path" "python3 -c \"import json;d=json.load(open('$TMP/delta1.json'));raise SystemExit(0 if d['captured'][0]['mode']=='delta' else 1)\""
+check "earlier output is not rewritten"       "test \"$(head -2 "$DOUT" | md5)\" = \"$BASE_HEAD\""
+check "only settled events are appended"      "test \$(wc -l < $DOUT | tr -d ' ') -eq \$((BASE_LINES+1))"
+check "unresolved tool call is held back"     "! grep -q 'tc_delta' $DOUT"
+
+# Now the result arrives in a later chunk.
+printf '%s\n' \
+ '{"type":"message","id":"d3","timestamp":"2026-01-01T10:00:03.000Z","message":{"role":"toolResult","toolCallId":"tc_delta","toolName":"bash","isError":false,"content":[{"type":"text","text":"Successfully rebased and updated refs/heads/topic."}],"timestamp":3}}' \
+ >> "$DFIX.jsonl"
+$SOCRATES capture --file "$DFIX.jsonl" --harness pi --format json >/dev/null
+check "held-back call is joined to its late result" "python3 -c \"
+import json
+ev=[json.loads(l) for l in open('$DOUT')][1:]
+t=[e for e in ev if e.get('kind')=='tool']
+assert len(t)==1, f'expected 1 tool event, got {len(t)}'
+assert t[0].get('output'), 'tool event has no output'
+assert 'Successfully rebased' in t[0]['output']
+\""
+check "no orphan tool_result leaked"  "! grep -q 'tool_result' $DOUT"
+check "seq is monotonic and unique"   "python3 -c \"
+import json
+ev=[json.loads(l) for l in open('$DOUT') if l.strip()]
+s=[e['seq'] for e in ev if e.get('type')=='event']
+assert s==sorted(s) and len(s)==len(set(s)), s
+\""
+
+# A partial trailing line is left for next time, not half-parsed.
+printf '%s' '{"type":"message","id":"d4","timestamp":"2026-01-01T10:00:04.000Z","message":{"role":"user","cont' >> "$DFIX.jsonl"
+$SOCRATES capture --file "$DFIX.jsonl" --harness pi >/dev/null
+check "a half-written line is not parsed" "! grep -q 'd4' $DOUT"
+
+# --force ignores the cursor entirely.
+$SOCRATES capture --file "$DFIX.jsonl" --harness pi --force --format json > "$TMP/delta2.json"
+check "--force does a full reload" "python3 -c \"import json;d=json.load(open('$TMP/delta2.json'));raise SystemExit(0 if d['captured'][0]['mode']=='full' else 1)\""
+
+# A session that goes quiet should stop holding its tail back.
+printf '%s\n' \
+ '{"type":"session","version":3,"id":"sess_settle","timestamp":"2026-01-01T11:00:00.000Z","cwd":"/tmp/demo"}' \
+ '{"type":"message","id":"e1","timestamp":"2026-01-01T11:00:01.000Z","message":{"role":"assistant","content":[{"type":"toolCall","id":"tc_settle","name":"bash","arguments":{"command":"ls"}}],"timestamp":1}}' \
+ > "$DFIX2.jsonl"
+$SOCRATES capture --file "$DFIX2.jsonl" --harness pi >/dev/null
+SOUT="$SOCRATES_HOME/events/pi/sess_settle.jsonl"
+check "lone tool call is initially held back" "! grep -q 'tc_settle' $SOUT"
+SOCRATES_SETTLE_MS=0 $SOCRATES capture --file "$DFIX2.jsonl" --harness pi >/dev/null
+check "a quiet session flushes its tail"      "grep -q 'tc_settle' $SOUT"
+check "unchanged file is still skipped"       "$SOCRATES capture --file $DFIX2.jsonl --harness pi --format json | python3 -c \"import json,sys;raise SystemExit(0 if json.load(sys.stdin)['skipped']==1 else 1)\""
+
+# Two source files can legitimately share a session id: Codex resumes a session
+# into a new rollout that reuses session_id. Storage is per source file, so
+# neither may truncate the other.
+printf '%s\n' \
+ '{"type":"session","version":3,"id":"sess_dup","timestamp":"2026-01-01T09:00:00.000Z","cwd":"/tmp/a"}' \
+ '{"type":"message","id":"x1","timestamp":"2026-01-01T09:00:01.000Z","message":{"role":"user","content":[{"type":"text","text":"first rollout"}],"timestamp":1}}' \
+ > "$TMP/dup-a.jsonl"
+printf '%s\n' \
+ '{"type":"session","version":3,"id":"sess_dup","timestamp":"2026-01-01T09:05:00.000Z","cwd":"/tmp/b"}' \
+ '{"type":"message","id":"y1","timestamp":"2026-01-01T09:05:01.000Z","message":{"role":"user","content":[{"type":"text","text":"second rollout"}],"timestamp":2}}' \
+ > "$TMP/dup-b.jsonl"
+$SOCRATES capture --file "$TMP/dup-a.jsonl" --harness pi >/dev/null
+$SOCRATES capture --file "$TMP/dup-b.jsonl" --harness pi >/dev/null
+check "same session id from two files both survive" "python3 -c \"
+import glob
+texts=[open(f).read() for f in glob.glob('$SOCRATES_HOME/events/pi/*.jsonl')]
+hit=[t for t in texts if 'sess_dup' in t]
+assert len(hit)==2, f'expected 2 output files, got {len(hit)}'
+assert any('first rollout' in t for t in hit), 'first rollout lost'
+assert any('second rollout' in t for t in hit), 'second rollout lost'
+\""
+
+# Subagent transcripts are the same noise as isSidechain records, in their own
+# files, and have no sessionId of their own.
+FAKE="$TMP/fakehome"
+mkdir -p "$FAKE/.claude/projects/-proj/abc/subagents"
+printf '%s\n' '{"type":"user","uuid":"u1","sessionId":"real-session","timestamp":"2026-01-01T08:00:00.000Z","cwd":"/tmp/p","message":{"role":"user","content":[{"type":"text","text":"real turn"}]}}' > "$FAKE/.claude/projects/-proj/real.jsonl"
+printf '%s\n' '{"type":"user","uuid":"u2","timestamp":"2026-01-01T08:01:00.000Z","message":{"role":"user","content":[{"type":"text","text":"subagent turn"}]}}' > "$FAKE/.claude/projects/-proj/abc/subagents/agent-1.jsonl"
+cat > "$TMP/discover.mjs" <<JS
+import { discover } from "file://$PWD/plugin/lib/capture.mjs";
+const files = discover().map((f) => f.file);
+if (files.some((f) => f.includes("subagents"))) { console.error(files); process.exit(1); }
+if (!files.some((f) => f.endsWith("real.jsonl"))) { console.error("real session missing"); process.exit(1); }
+JS
+check "claude-code subagent transcripts are skipped" "HOME=$FAKE node $TMP/discover.mjs"
+check "unreadable session ids cannot escape the events dir" "! ls $SOCRATES_HOME/events/*/ 2>/dev/null | grep -q 'jsonl.jsonl'"
+
 head "taste — personalization"
 
 taste_add() { $SOCRATES taste add --json "$1" >/dev/null; }
@@ -203,7 +305,7 @@ check "card with no blocks rejected" "! $SOCRATES card add --json '{\"title\":\"
 check "missing title rejected"      "! $SOCRATES card add --json '{\"blocks\":[{\"type\":\"explanation\",\"text\":\"x\"}]}' 2>/dev/null"
 check "layout class applied"        "grep -q 'card layout--before-after' $SOCRATES_HOME/pages/*.html"
 check "index links the card"        "grep -q 'pages/crd_' $SOCRATES_HOME/index.html"
-check "card is self-contained"      "! grep -qE '<script|<link rel=\"stylesheet\"|@import' $SOCRATES_HOME/pages/*.html"
+check "pages have no external resources" "! grep -qE '<link[^>]+rel=\"stylesheet\"|@import|<script[^>]+src=|<img[^>]+src=\"http|url\\(http' $SOCRATES_HOME/pages/*.html"
 check "card has provenance footer"  "grep -q 'toolbox/socrates' $SOCRATES_HOME/pages/*.html"
 
 CARD_ID="$(python3 -c "import json,subprocess;print(json.loads(subprocess.check_output(['$SOCRATES','card','list','--format','json']))[0]['id'])")"
@@ -227,6 +329,12 @@ check "hand-written html is used verbatim" "$SOCRATES card add --json-file $TMP/
 check "html fragment gets a plain shell"   "$SOCRATES card add --json-file $TMP/fragment.json --format json | python3 -c \"import json,sys;d=json.load(sys.stdin);h=open(d['file']).read();raise SystemExit(0 if '<!doctype html>' in h and 'class=\\\"frag\\\"' in h else 1)\""
 check "json-file avoids shell quoting"     "$SOCRATES card add --json-file $TMP/fragment.json --format json >/dev/null"
 check "neither html nor blocks rejected"   "! $SOCRATES card add --json '{\"title\":\"Empty\"}' 2>/dev/null"
+cat > "$TMP/interactive.json" <<'JSON'
+{"title":"Interactive page","topic":"custom","summary":"has a script","html":"<!doctype html><html><head><title>i</title></head><body><p id=\"out\">static</p><script>document.getElementById('out').textContent='live';</script></body></html>"}
+JSON
+check "inline interactivity survives verbatim" "$SOCRATES card add --json-file $TMP/interactive.json --format json | python3 -c \"import json,sys;d=json.load(sys.stdin);h=open(d['file']).read();raise SystemExit(0 if \\\"textContent='live'\\\" in h and 'static' in h else 1)\""
+check "inline scripts are valid javascript"    "node test/check-pages.mjs $SOCRATES_HOME/pages"
+check "page is readable without javascript"    "$SOCRATES card add --json-file $TMP/interactive.json --format json | python3 -c \"import json,sys;d=json.load(sys.stdin);h=open(d['file']).read();raise SystemExit(0 if 'static' in h.split('<script>')[0] else 1)\""
 check "board renders papers"               "grep -q 'class=\"paper\"' $SOCRATES_HOME/index.html"
 check "paper has a stable tilt"            "grep -qE 'style=\"--r:' $SOCRATES_HOME/index.html"
 check "board carries the hover wiggle"     "grep -q '@keyframes wiggle' $SOCRATES_HOME/index.html"

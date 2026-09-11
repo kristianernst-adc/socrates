@@ -179,12 +179,53 @@ Each adapter is ~40 lines and disposable. These formats are internal to their
 tools and change without warning, so if one breaks, rewrite it and nothing else
 moves. Everything downstream sees only normalised events.
 
+### Incremental loading
+
+Two levels, both keyed on the source file:
+
+1. **Unchanged file** — size and mtime match the cursor, so it is never opened.
+   A no-op sync over 2,000 sessions takes ~0.12s.
+2. **Appended file** — read from the last consumed byte offset and *append* the
+   new events. A 51MB rollout that gains one line costs one line, not 51MB.
+
+Session transcripts are append-only, which is what makes (2) safe. Two details
+make it correct rather than merely fast:
+
+- **A trailing tool call is held back.** A tool call whose result has not
+  arrived yet is buffered in the cursor rather than written, so the result can
+  still be folded onto its call when it shows up in a later chunk. Without this,
+  appending would leave a tool event and a separate orphan result. If a session
+  goes quiet for `SOCRATES_SETTLE_MS` (default 60s), the tail is flushed as-is.
+- **A partial trailing line is left alone.** The read stops at the last newline;
+  a half-written line is picked up next time.
+
+A cursor entry records the byte offset, the next sequence number, the session
+meta, and any held-back events. The file is versioned, so a change to its
+meaning invalidates it rather than silently pointing at the wrong output.
+
+### Storage is per source file, not per session
+
+This matters more than it looks. Codex **resumes a session into a new rollout
+file that reuses the same `session_id`** — one session, many files. Keying
+storage on the session id made later rollouts truncate earlier ones; 53 sessions
+in a real corpus were losing data that way.
+
+So each adapter reports both:
+
+- `id` — the source file's own identity (Codex takes `payload.id`, the rollout
+  id, not `session_id`)
+- `sessionId` — the logical session, shared across resumed rollouts
+
+Storage keys on `id`. If two files still claim the same one, the loser gets a
+short path hash rather than overwriting the winner.
+
+Full reads stream in 8MB blocks with a `StringDecoder`, so the previous ~512MB
+V8 string ceiling no longer applies — an 894MB rollout that used to be skipped
+now captures in about 3 seconds.
+
 Deliberately dropped during normalisation: thinking blocks, Codex `developer`
 boilerplate, Claude Code sidechains, image payloads, and tool output past ~2000
 characters. Bulk without the moment that matters.
-
-Sessions over 256MB are skipped with a clear message rather than crashing the
-scan. Override with `SOCRATES_MAX_SESSION_BYTES`.
 
 ## Status
 
@@ -199,10 +240,11 @@ download.
 Not done yet:
 
 - per-harness hooks under `com.socrates/` — capture is pull-based only
+- no compaction of `events/`: retired sources are never pruned from disk
 - wiring `TASTE.md` into a system prompt
 - the scheduled jobs that keep cards and taste fresh without being asked
 - MCP tools for cards, moods and capture (only taste is exposed so far)
 - no eval set for card quality, so nothing guards against drift
 - typography has not been chosen deliberately; it is the highest-leverage thing
   on the mood board
-- `events/` is one file per session, not month-sharded as design.md sketched
+- `events/` is one file per *source session file*, not month-sharded as design.md sketched
