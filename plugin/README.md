@@ -262,10 +262,8 @@ download.
 
 Not done yet:
 
-<<<<<<< HEAD
 - dogfooding the loop on our own work (stage 4)
 - per-harness hooks under `com.socrates/`
-- per-harness hooks under `com.socrates/` — capture is pull-based only
 - no compaction of `events/`: retired sources are never pruned from disk
 - wiring `TASTE.md` into a system prompt
 - the scheduled jobs that keep pages and taste fresh without being asked
