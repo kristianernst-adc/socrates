@@ -242,6 +242,26 @@ JS
 check "claude-code subagent transcripts are skipped" "HOME=$FAKE node $TMP/discover.mjs"
 check "unreadable session ids cannot escape the events dir" "! ls $SOCRATES_HOME/events/*/ 2>/dev/null | grep -q 'jsonl.jsonl'"
 
+# Output files can outlive the source naming that produced them. A full scan
+# sweeps what no source claims; a partial one must never, or `--file X` would
+# delete every other session.
+FAKE2="$TMP/fakehome2"
+mkdir -p "$FAKE2/.pi/agent/sessions"
+cp "$FIX/pi.jsonl" "$FAKE2/.pi/agent/sessions/real.jsonl"
+mkdir -p "$SOCRATES_HOME/events/pi"
+printf '%s\n' '{"type":"event","session":"ghost"}' > "$SOCRATES_HOME/events/pi/ghost.jsonl"
+
+$SOCRATES capture --file "$FIX/pi.jsonl" --adapter pi >/dev/null
+check "a partial scan keeps other sessions" "test -f $SOCRATES_HOME/events/pi/ghost.jsonl"
+
+HOME="$FAKE2" $SOCRATES capture >/dev/null
+check "a full scan sweeps orphan files"     "! test -f $SOCRATES_HOME/events/pi/ghost.jsonl"
+check "the sweep reports what it removed"   "HOME=$FAKE2 $SOCRATES capture --format json | python3 -c \"import json,sys;d=json.load(sys.stdin);raise SystemExit(0 if 'removed' in d else 1)\""
+
+# Piping into head must not print a stack trace.
+check "closing the pipe early is not a crash" "$SOCRATES extract --list 2>&1 | head -2 | grep -qv Traceback"
+check "capture reports orphan removals"        "$SOCRATES capture --format json >/dev/null"
+
 head "taste — personalization"
 
 taste_add() { $SOCRATES taste add --json "$1" >/dev/null; }

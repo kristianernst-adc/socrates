@@ -26,6 +26,7 @@ import {
   readFileSync,
   readSync,
   statSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { StringDecoder } from "node:string_decoder";
@@ -657,8 +658,38 @@ export function capture({ home, only, adapter, force = false, dryRun = false, so
     }
   }
 
+  // Output files can outlive the source naming that produced them — Codex alone
+  // moved from session_id to rollout id — so a full scan sweeps anything no
+  // source currently claims. Never on a partial scan: `--file X` would then
+  // delete every other session.
+  if (!only?.length && !dryRun) {
+    result.removed = sweepOrphans(home, claimed);
+  }
+
   writeCursor(home, cursor);
   return result;
+}
+
+function sweepOrphans(home, claimed) {
+  const root = paths(home).eventsDir;
+  if (!existsSync(root) || !claimed.size) return [];
+  const live = new Set(claimed.keys());
+  const removed = [];
+  for (const adapter of readdirSync(root, { withFileTypes: true })) {
+    if (!adapter.isDirectory()) continue;
+    for (const name of readdirSync(join(root, adapter.name))) {
+      if (!name.endsWith(".jsonl")) continue;
+      const full = join(root, adapter.name, name);
+      if (live.has(full)) continue;
+      try {
+        unlinkSync(full);
+        removed.push(full);
+      } catch {
+        /* an orphan is not worth failing a scan over */
+      }
+    }
+  }
+  return removed;
 }
 
 export function listSessions(home) {
